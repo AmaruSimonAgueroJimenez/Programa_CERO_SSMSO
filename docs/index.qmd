@@ -1,0 +1,3031 @@
+---
+title: "Programa CERO SSMSO"
+lang: es
+author:
+  - name: "Josefina Aubert Valderrama"
+    email: josefina.aubert@uss.cl
+    orcid: "0000-0001-8630-7975"
+  - name: "Amaru Simón Agüero Jiménez"
+    email: amaruaguero2004@ug.uchile.cl
+    orcid: "0000-0001-7336-1833"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+execute:
+  warning: false #que los chunks no arrojen mensajes de emergencia
+  message: false #que los chunks no arrojen mensajes
+  fig-width: 12 #ancho de las figuras en el documento
+  fig-height: 10 #alto de las figuras
+---
+
+# Administración de datos y paquetes R
+```{r message=FALSE, warning=FALSE}
+install_and_load_packages <- function(packages) {
+  for (package in packages) {
+    if (!require(package, character.only = TRUE)) {
+      install.packages(package)
+      library(package, character.only = TRUE)
+    }
+  }
+}
+
+necessary_packages <- c("knitr", "tidyverse", "naniar","kableExtra", "DT", "readr", "naniar", "table1", "summarytools","readxl")
+
+install_and_load_packages(necessary_packages)
+
+
+opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE)
+
+options(warn = -1)  # Suprime advertencias
+options(readr.show_col_types = FALSE)  # Evita mensajes de `read_csv()`
+```
+
+## Datos usuarios
+
+```{r}
+usuarios <- read_delim(
+  file = paste0(gsub("/docs", "", getwd()), "/data/20241118/Usuarios.csv"),
+  escape_double = FALSE,
+  delim = ";",
+  trim_ws = TRUE,
+  locale = locale(encoding = "ISO-8859-1") # Cambia a "ISO-8859-1" si UTF-8 no funciona
+) %>% mutate(OCUPACION_MADRE_COD = as.numeric(OCUPACION_MADRE_COD))
+
+usuarios3 <- read_delim(
+  file = paste0(gsub("/docs", "", getwd()), "/data/20241118/Usuarios3.csv"),
+  escape_double = FALSE,
+  delim = ";",
+  trim_ws = TRUE,
+  locale = locale(encoding = "ISO-8859-1") # Cambia a "ISO-8859-1" si UTF-8 no funciona
+) %>% mutate(OCUPACION_MADRE_COD = as.numeric(OCUPACION_MADRE_COD))
+
+usuarios2 <- read_excel(paste0(gsub("/docs", "", getwd()), "/data/20241118/Usuarios2.xlsx"), 
+    na = "NULL") %>% mutate(TIPO_INSCRIPCION = NA) %>%
+  rename(
+    SEXO_COD                   = COD_SEX,
+    SEXO_DESCRIPCION           = SEXO,
+    FECHA_NACIMIENTO           = FECHA_DE_NACIMIENTO,
+    PERIODO_EVALUACION         = PEROIODO,
+    OCUPACION_MADRE_COD        = OCUPA_M,
+    OCUPACION_MADRE_DESCRIPCION= GLOS_OCUM,
+    TOTAL_HIJOS                = HIJ_TOTAL,
+    HIJOS_VIVOS                = HIJ_VIVOS,
+    NACIONALIDAD_MADRE         = NAC_MA,
+    COD_DEIS_CENTRO            = COD_DEIS,
+  ) 
+
+# Convertir variables de tipo carácter a factores
+usuarios <- usuarios %>% 
+  bind_rows(., usuarios2) %>% 
+  bind_rows(., usuarios3) %>% 
+  mutate(FECHA_NACIMIENTO = as.Date(FECHA_NACIMIENTO, format = "%d-%m-%Y")) %>% 
+  mutate(SEXO_COD = factor(SEXO_COD, 
+                          levels = c("1", "2", "3", "9"), 
+                          labels = c("Masculino", "Femenino", "Intersexual", "Desconocido"))) %>%  # Convertimos a character antes de filtrar
+  filter(!(COMUNA %in% c("La Granja", "Puente Alto"))) %>% 
+  filter(!(str_detect(NOMBRE_CENTRO, "^COSAM") | 
+           str_detect(NOMBRE_CENTRO, "^SA") | 
+           str_detect(NOMBRE_CENTRO, "CHRISTUS$"))) %>%
+  filter(!(str_detect(NOMBRE_CENTRO, "Hospital Clínico Metropolitano La Florida Dra. Eloísa Díaz Insunza") | 
+           str_detect(NOMBRE_CENTRO, "Hospital Padre Alberto Hurtado (San Ramón)"))) %>%
+  mutate(across(where(is.character), as.factor))
+# %>% select(-11,-12) #OCUPACION DE LA MADRE
+```
+
+```{r}
+summary_table <- function(data) {
+  # Crear la tabla de resumen
+  data.frame(
+    ColumnName = colnames(data),                    # Nombres de columnas
+    Class = sapply(data, function(x) paste(class(x), collapse = ", ")), # Clase de la columna
+    NAs = sapply(data, function(x) sum(is.na(x))), # Conteo de valores NA
+    Info = sapply(data, function(x) {
+      if (is.factor(x) || is.character(x)) {
+        # Tratar character como factor y mostrar niveles
+        x <- as.factor(x)
+        paste("Levels:", paste(levels(x), collapse = ", "))
+      } else if (is.numeric(x)) {
+        # Rango para valores numéricos
+        paste("Range:", min(x, na.rm = TRUE), "-", max(x, na.rm = TRUE))
+      } else if (inherits(x, "POSIXct") || inherits(x, "Date")) {
+        # Rango para fechas POSIXct o Date
+        paste("Range:", min(x, na.rm = TRUE), "-", max(x, na.rm = TRUE))
+      } else {
+        "N/A"
+      }
+    }, USE.NAMES = FALSE),  # Eliminar nombres no deseados
+    stringsAsFactors = FALSE  # Evitar convertir a factor
+  )
+}
+
+usuarios <- usuarios %>% distinct(across(1:19), .keep_all = TRUE)
+
+tabla_resumen <-  summary_table(usuarios)
+rownames(tabla_resumen) <- NULL
+
+datatable(tabla_resumen, 
+          options = list(pageLength = 10,  # Número de filas por página
+                         autoWidth = TRUE, 
+                         scrollX = TRUE,
+                         scrollY = "400px"))
+
+vis_miss(usuarios[sample(nrow(usuarios), 10000), 1:19], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+gg_miss_upset(usuarios, nsets = n_var_miss(usuarios))
+
+
+
+t1kable(table1(~ . | PERIODO_EVALUACION, data = usuarios %>% select(-ID_USUARIO, -ID_MADRE, -FECHA_NACIMIENTO, -OCUPACION_MADRE_DESCRIPCION, -OCUPACION_MADRE_COD, -COD_DEIS_CENTRO) %>% mutate(PERIODO_EVALUACION = as.factor(PERIODO_EVALUACION)), overall=c(left="Total"))) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "600px")
+
+```
+
+## Datos citas odontológicas
+
+```{r}
+citas_odonto <- read_delim(
+  file = paste0(gsub("/docs", "", getwd()), "/data/20241118/ARCHIVO CITAS ODONTOLÓGICAS 2024.csv"),
+  escape_double = FALSE,
+  delim = ";",
+  na = "NULL", 
+  trim_ws = TRUE,            # Elimina espacios adicionales
+  col_names = FALSE, 
+  locale = locale(encoding = "UTF-8") # Cambia a "ISO-8859-1" si UTF-8 no funciona
+)
+
+citas_odonto2 <- read_delim(paste0(gsub("/docs", "", getwd()), "/data/20241118/Citas2.csv"), 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+# Los nombres de las columnas según la imagen
+column_names <- c(
+  "ID_CITA", "ID_USUARIO", "FECHA_HORA_ASIGNACION_CITA", "FECHA_HORA_INICIO", "FECHA_HORA_TERMINO",
+  "ESTADO_CITA", "TIPO_PROFESIONAL", "NOMBRE_DE_AGENDA",
+  "RENDIMIENTO", "NOMBRE_ESTABLECIMIENTO", "NOMBRE_COMUNA"
+)
+
+# Asignar los nuevos nombres de columnas
+colnames(citas_odonto) <- column_names
+colnames(citas_odonto2) <- column_names
+
+# Crear un diccionario de correspondencia entre los nombres
+nombre_correspondencia <- c(
+  "Bellavista [CGU]" = "Centro de Salud Familiar Bellavista",
+  "CECOSF Modelo" = "Centro Comunitario de Salud Familiar Modelo",
+  "Centro Comunitario de Salud Familiar Las Lomas" = "Centro Comunitario de Salud Familiar Las Lomas",
+  "Cesfam José Alvo" = "Centro de Salud Familiar José Alvo",
+  "CESFAM Jose Manuel Balmaceda" = "Centro de Salud Familiar Dr. José Manuel Balmaceda",
+  "Cesfam La Bandera" = "Centro de Salud Familiar La Bandera",
+  "Consultorio San Ramón" = "Centro de Salud Familiar Dr. Salvador Allende (Ex Consultorio San Ramón)",
+  "CSR EL Principal" = "Centro de Salud Rural El Principal",
+  "El Roble [CESFAM]" = "Centro de Salud Familiar El Roble",
+  "Flor Fernandez [CGU]" = "Centro de Salud Familiar Flor Fernández",
+  "Gabriela Mistral [CESFAM]" = "Centro de Salud Familiar Poetisa Gabriela Mistral",
+  "Hospital San José (Maipo)" = "Hospital San José de Maipo",
+  "La Florida [CESFAM]" = "Centro de Salud Familiar La Florida",
+  "Las Vertientes [PSR]" = "Posta de Salud Rural Las Vertientes",
+  "Los Castaños [CSF]" = "Centro de Salud Familiar Los Castaños",
+  "Los Quillayes [CGU]" = "Centro de Salud Familiar Los Quillayes",
+  "Maffioletti [CGU]" = "Centro de Salud Familiar Dr. Fernando Maffioletti",
+  "Pablo De Rokha [CGU]" = "Centro de Salud Familiar Pablo de Rokha",
+  "POSTA LA PUNTILLA" = "Posta de Salud Rural Puntilla",
+  "POSTA SAN VICENTE" = "Posta de Salud Rural San Vicente",
+  "POSTA SANTA RITA" = "Posta de Salud Rural Santa Rita",
+  "Resolutividad La Florida" = "SAR Los Quillayes",
+  "San Gabriel [PSR]" = "Posta de Salud Rural San Gabriel",
+  "San Rafael [CGU]" = "Centro de Salud Familiar San Rafael",
+  "Santa Amalia [CESFAM]" = "Centro de Salud Familiar Santa Amalia",
+  "Santiago Nuevo Extremadura [CGU]" = "Centro de Salud Familiar Santiago de Nueva Extremadura",
+  "Santo Tomas [CGU]" = "Centro de Salud Familiar Santo Tomás",
+  "Trinidad [CESFAM]" = "Centro de Salud Familiar Trinidad",
+  "Villa O higgins [CGU]" = "Centro de Salud Familiar Villa O'Higgins"
+)
+
+citas_odonto <- citas_odonto %>% bind_rows(., citas_odonto2)
+citas_odonto <- citas_odonto %>% distinct(across(1:11), .keep_all = TRUE) %>%
+  mutate(NOMBRE_ESTABLECIMIENTO = recode(NOMBRE_ESTABLECIMIENTO, !!!nombre_correspondencia)) %>%
+  filter(!(str_detect(NOMBRE_ESTABLECIMIENTO, "Centro Comunitario de Salud Familiar Las Lomas") | 
+           str_detect(NOMBRE_ESTABLECIMIENTO, "SAR Los Quillayes")))
+
+tabla_resumen <- summary_table(citas_odonto)
+
+rownames(tabla_resumen) <- NULL
+datatable(tabla_resumen, 
+          options = list(pageLength = 10,  # Número de filas por página
+                         autoWidth = TRUE, 
+                         scrollX = TRUE,
+                         scrollY = "400px"))
+
+vis_miss(citas_odonto[sample(nrow(citas_odonto), 10000), 1:11], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+
+t1kable(table1(~ .|YEAR, data = citas_odonto %>%
+  mutate(
+    YEAR = as.numeric(format(FECHA_HORA_INICIO, "%Y"))) %>% 
+    select(-ID_USUARIO, -ID_CITA, -FECHA_HORA_ASIGNACION_CITA, -FECHA_HORA_INICIO, -FECHA_HORA_TERMINO), overall=c(left="Total"))) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "600px")
+```
+
+## Datos atenciones odontológicas
+
+```{r}
+# Carga la base de datos donde la primera fila no se interpretará como nombres de columnas
+atencion_odonto <- read_delim(
+  file = paste0(gsub("/docs", "", getwd()), "/data/20241118/ARCHIVO ATENCIONES ODONTOLÓGICAS 2024.csv"),
+  delim = ";",                 # Define el delimitador como ";"
+  escape_double = FALSE,       # No duplica comillas escapadas
+  na = "NULL",                 # Define los valores faltantes
+  trim_ws = TRUE,              # Elimina espacios adicionales
+  col_names = FALSE,           # NO usa la primera fila como nombres de columnas
+  locale = locale(encoding = "UTF-8") # Cambia el encoding si es necesario
+)
+
+# Los nombres de las columnas según la imagen
+column_names <- c(
+  "ID_ATENCION",
+  "FECHA_HORA_INICIO_INICIO_ATENCION",
+  "FECHA_HORA_TERMINO_TERMINO_ATENCION",
+  "ID_CITA",
+  "ID_USUARIO",
+  "ESTADO_ATENCION",
+  "NOMBRE_ESTABLECIMIENTO",
+  "NOMBRE_COMUNA",
+  "TIPO_PROFESIONAL",
+  "ID_PROFESIONAL",
+  "NOMBRE_PRESTACION"
+)
+
+# Asignar los nuevos nombres de columnas
+colnames(atencion_odonto) <- column_names
+
+nombre_correspondencia <- c(
+  "Bellavista [CGU]" = "Centro de Salud Familiar Bellavista",
+  "CECOSF Modelo" = "Centro Comunitario de Salud Familiar Modelo",
+  "Centro Comunitario de Salud Familiar Las Lomas" = "Centro Comunitario de Salud Familiar Las Lomas",
+  "Cesfam José Alvo" = "Centro de Salud Familiar José Alvo",
+  "CESFAM Jose Manuel Balmaceda" = "Centro de Salud Familiar Dr. José Manuel Balmaceda",
+  "Cesfam La Bandera" = "Centro de Salud Familiar La Bandera",
+  "Consultorio San Ramón" = "Centro de Salud Familiar Dr. Salvador Allende (Ex Consultorio San Ramón)",
+  "CSR EL Principal" = "Centro de Salud Rural El Principal",
+  "El Roble [CESFAM]" = "Centro de Salud Familiar El Roble",
+  "Flor Fernandez [CGU]" = "Centro de Salud Familiar Flor Fernández",
+  "Gabriela Mistral [CESFAM]" = "Centro de Salud Familiar Poetisa Gabriela Mistral",
+  "Hospital San José (Maipo)" = "Hospital San José de Maipo",
+  "La Florida [CESFAM]" = "Centro de Salud Familiar La Florida",
+  "Las Vertientes [PSR]" = "Posta de Salud Rural Las Vertientes",
+  "Los Castaños [CSF]" = "Centro de Salud Familiar Los Castaños",
+  "Los Quillayes [CGU]" = "Centro de Salud Familiar Los Quillayes",
+  "Maffioletti [CGU]" = "Centro de Salud Familiar Dr. Fernando Maffioletti",
+  "Pablo De Rokha [CGU]" = "Centro de Salud Familiar Pablo de Rokha",
+  "POSTA LA PUNTILLA" = "Posta de Salud Rural Puntilla",
+  "POSTA SAN VICENTE" = "Posta de Salud Rural San Vicente",
+  "POSTA SANTA RITA" = "Posta de Salud Rural Santa Rita",
+  "Resolutividad La Florida" = "Centro de Salud Familiar La Florida",
+  "San Gabriel [PSR]" = "Posta de Salud Rural San Gabriel",
+  "San Rafael [CGU]" = "Centro de Salud Familiar San Rafael",
+  "Santa Amalia [CESFAM]" = "Centro de Salud Familiar Santa Amalia",
+  "Santiago Nuevo Extremadura [CGU]" = "Centro de Salud Familiar Santiago de Nueva Extremadura",
+  "Santo Tomas [CGU]" = "Centro de Salud Familiar Santo Tomás",
+  "Trinidad [CESFAM]" = "Centro de Salud Familiar Trinidad",
+  "Villa O higgins [CGU]" = "Centro de Salud Familiar Villa O'Higgins",
+  "SAPU VILLA O,HIGGINS" = "SAPU Villa O'Higgins"  # Nueva correspondencia
+)
+
+atencion_odonto <- atencion_odonto %>% distinct(across(1:11), .keep_all = TRUE) %>%
+  mutate(NOMBRE_ESTABLECIMIENTO = recode(NOMBRE_ESTABLECIMIENTO, !!!nombre_correspondencia))
+
+
+tabla_resumen <- summary_table(atencion_odonto)
+
+rownames(tabla_resumen) <- NULL
+datatable(tabla_resumen, 
+          options = list(pageLength = 10,  # Número de filas por página
+                         autoWidth = TRUE, 
+                         scrollX = TRUE,
+                         scrollY = "400px"))
+
+# Visualizar los datos faltantes con una muestra aleatoria de los datos
+vis_miss(atencion_odonto[sample(nrow(atencion_odonto), 10000), 1:11], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+
+t1kable(table1(~ ., data = select(atencion_odonto, -ID_ATENCION, -ID_CITA, -ID_USUARIO, -FECHA_HORA_INICIO_INICIO_ATENCION, -FECHA_HORA_TERMINO_TERMINO_ATENCION), overall = "Total")) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "600px")
+
+```
+
+## Datos indice ceo
+```{r}
+# Carga la base de datos donde la primera fila no se interpretará como nombres de columnas
+indice_ceo <- read_delim(
+  file = paste0(gsub("/docs", "", getwd()), "/data/20241118/ARCHIVO APLICACION INDICE CEO 2024 v2.csv"),
+  delim = ";",                 # Define el delimitador como ";"
+  escape_double = FALSE,       # No duplica comillas escapadas
+  na = "NULL",                 # Define los valores faltantes
+  trim_ws = TRUE,              # Elimina espacios adicionales
+  col_names = FALSE,           # NO usa la primera fila como nombres de columnas
+  locale = locale(encoding = "UTF-8") # Cambia el encoding si es necesario
+)
+
+# Los nombres de las columnas según la imagen
+column_names <- c(
+  "ID_USUARIO", "FECHA_DE_NACIMIENTO", "EDAD_APLICACION_CEO", "ID_ATENCION",
+  "NOMBRE_ESTABLECIMIENTO", "NOMBRE_COMUNA", "FECHA_APLICACION_INDICE_CEO",
+  "TOTAL_CARIADOS", "TOTAL_OBTURADOS", "TOTAL_EXTRAIDOS", "TOTAL_INDICE", 
+  "ETAPA", "EDAD_GESTACIONAL", "EDAD_USUARIO", "ESTADO_TRATAMIENTO",
+  "ESTADO_TRATAMIENTO_GLOSA", "TOTAL_INDICACION_EXTRACCION", "CONTAR_REM",
+  "TOTAL_CARIADOS_CALCULADO", "TOTAL_OBTURADOS_CALCULADO", 
+  "TOTAL_EXTRAIDOS_CALCULADO", "TOTAL_INDICE_CALCULADO", "ES_EDITADO"
+)
+
+# Asignar los nuevos nombres de columnas
+colnames(indice_ceo) <- column_names
+
+indice_ceo <- indice_ceo %>% distinct(across(1:11), .keep_all = TRUE)
+
+tabla_resumen <- summary_table(indice_ceo)
+
+rownames(tabla_resumen) <- NULL
+datatable(tabla_resumen, 
+          options = list(pageLength = 10,  # Número de filas por página
+                         autoWidth = TRUE, 
+                         scrollX = TRUE,
+                         scrollY = "400px"))
+
+# Visualizar los datos faltantes con el ángulo del texto a 90 grados
+vis_miss(indice_ceo[sample(nrow(indice_ceo), 10000), 1:23], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+
+t1kable(table1(~ ., data = select(indice_ceo, -ID_ATENCION, -ID_USUARIO, -FECHA_APLICACION_INDICE_CEO, -FECHA_DE_NACIMIENTO), overall = "Total")) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "600px")
+```
+
+## Datos pauta cero
+```{r}
+pauta_cero <- read_delim(
+  file = paste0(gsub("/docs", "", getwd()), "/data/20241118/ARCHIVO APLICACION PAUTA CERO 2024.csv"),
+  escape_double = FALSE,
+  delim = ";",
+  na = "NULL", 
+  trim_ws = TRUE,
+  locale = locale(encoding = "UTF-8") # Cambia a "ISO-8859-1" si UTF-8 no funciona
+)
+
+# ids_unicos <- unique(pauta_cero$ID_USUARIO)
+
+# # Convertir la columna de texto a formato fecha
+# pauta_cero2019<- pauta_cero %>%
+#   mutate(FECHA_APLICACION_PAUTA_CERO = as.POSIXct(FECHA_APLICACION_PAUTA_CERO, format = "%Y-%m-%d %H:%M:%S")) %>%
+#   # Extraer el año
+#   mutate(año = as.numeric(format(FECHA_APLICACION_PAUTA_CERO, "%Y"))) %>%
+#   # Filtrar por años desde 2019
+#   filter(año == 2019)
+
+tabla_resumen <- summary_table(pauta_cero)
+rownames(tabla_resumen) <- NULL
+datatable(tabla_resumen, 
+          options = list(pageLength = 10,  # Número de filas por página
+                         autoWidth = TRUE, 
+                         scrollX = TRUE,
+                         scrollY = "400px"))
+
+# Visualizar los datos faltantes con el ángulo del texto a 90 grados
+vis_miss(pauta_cero[sample(nrow(pauta_cero), 10000), 1:83], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+# ggsave("vis_miss_plot.png", width = 16, height = 9, dpi = 1000)
+
+gg_miss_upset(pauta_cero, nsets = 20)
+
+t1kable(table1(~ ., data = select(pauta_cero, -ID_ATENCION, -ID_USUARIO, -FECHA_APLICACION_PAUTA_CERO, -FH_Cero_FhaProxControl_0_5, -FH_Cero_FhaProxControl_6_9,-FH_Cero_FhaProxControl_10_19), overall=c(left="Total"))) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "600px")
+```
+
+## Datos control sano odontologíco
+
+```{r}
+control_sano_odonto <- read_delim(
+  file = paste0(gsub("/docs", "", getwd()), "/data/20241118/control_sano_odontologico.csv"),
+  escape_double = FALSE,
+  delim = ";",
+  na = "NULL", 
+  trim_ws = TRUE,
+  locale = locale(encoding = "UTF-8") # Cambia a "ISO-8859-1" si UTF-8 no funciona
+) %>%
+  mutate(across(where(~ all(na.omit(.) %in% c(0, 1))), 
+                ~ factor(., levels = c(0, 1), labels = c("No", "Sí"))))
+
+
+# ids_unicos <- unique(pauta_cero$ID_USUARIO)
+
+# # Convertir la columna de texto a formato fecha
+# pauta_cero2019<- pauta_cero %>%
+#   mutate(FECHA_APLICACION_PAUTA_CERO = as.POSIXct(FECHA_APLICACION_PAUTA_CERO, format = "%Y-%m-%d %H:%M:%S")) %>%
+#   # Extraer el año
+#   mutate(año = as.numeric(format(FECHA_APLICACION_PAUTA_CERO, "%Y"))) %>%
+#   # Filtrar por años desde 2019
+#   filter(año == 2019)
+
+tabla_resumen <- summary_table(control_sano_odonto)
+rownames(tabla_resumen) <- NULL
+datatable(tabla_resumen, 
+          options = list(pageLength = 10,  # Número de filas por página
+                         autoWidth = TRUE, 
+                         scrollX = TRUE,
+                         scrollY = "400px"))
+
+# Visualizar los datos faltantes con el ángulo del texto a 90 grados
+vis_miss(control_sano_odonto[sample(nrow(control_sano_odonto), 10000), 1:19], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+# ggsave("vis_miss_plot.png", width = 16, height = 9, dpi = 1000)
+
+gg_miss_upset(control_sano_odonto, nsets = 20)
+
+t1kable(table1(~ ., data = select(control_sano_odonto, -ID_ATENCION, -ID_USUARIO, -FECHA_APLICACION_PAUTA), overall=c(left="Total"))) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "600px")
+```
+
+## Datos control sano
+
+```{r}
+control_sano <- read_delim(
+  file = paste0(gsub("/docs", "", getwd()), "/data/20241118/control_sano.csv"),
+  escape_double = FALSE,
+  delim = ";",
+  na = "NULL", 
+  trim_ws = TRUE,
+  locale = locale(encoding = "UTF-8") # Cambia a "ISO-8859-1" si UTF-8 no funciona
+) %>%
+  mutate(across(where(~ all(na.omit(.) %in% c(0, 1))), 
+                ~ factor(., levels = c(0, 1), labels = c("No", "Sí"))))
+
+
+# ids_unicos <- unique(pauta_cero$ID_USUARIO)
+
+# # Convertir la columna de texto a formato fecha
+# pauta_cero2019<- pauta_cero %>%
+#   mutate(FECHA_APLICACION_PAUTA_CERO = as.POSIXct(FECHA_APLICACION_PAUTA_CERO, format = "%Y-%m-%d %H:%M:%S")) %>%
+#   # Extraer el año
+#   mutate(año = as.numeric(format(FECHA_APLICACION_PAUTA_CERO, "%Y"))) %>%
+#   # Filtrar por años desde 2019
+#   filter(año == 2019)
+
+tabla_resumen <- summary_table(control_sano)
+rownames(tabla_resumen) <- NULL
+datatable(tabla_resumen, 
+          options = list(pageLength = 10,  # Número de filas por página
+                         autoWidth = TRUE, 
+                         scrollX = TRUE,
+                         scrollY = "400px"))
+
+# Visualizar los datos faltantes con el ángulo del texto a 90 grados
+vis_miss(control_sano[sample(nrow(control_sano), 10000), 1:51], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+# ggsave("vis_miss_plot.png", width = 16, height = 9, dpi = 1000)
+
+gg_miss_upset(control_sano, nsets = 20)
+
+t1kable(table1(~ ., data = select(control_sano, -ATEN_ID, -USP_ID, -starts_with("Fecha")), overall=c(left="Total"))) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "600px")
+```
+
+# Merge 1 
+```{r}
+merge1 <- usuarios %>% distinct() %>%  
+  full_join(citas_odonto, by = c("ID_USUARIO")) %>%
+  mutate(
+    MERGE_USUARIO_CITAS = case_when(
+      !is.na(SEXO_COD) & !is.na(ID_CITA) ~ "Usuarios y Citas",
+      !is.na(SEXO_COD) & is.na(ID_CITA) ~ "Solo usuarios",
+      is.na(SEXO_COD) & !is.na(ID_CITA) ~ "Solo citas",
+      TRUE ~ "No unida"
+    )
+  )
+
+# Resumen del factor como tabla, incluyendo ID únicos
+tabla_resumen <- merge1 %>%
+  group_by(MERGE_USUARIO_CITAS) %>%
+  summarise(
+    Frecuencia = n(),
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T),
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  ) %>%
+  select(MERGE_USUARIO_CITAS, Frecuencia, Porcentaje,  Usuarios_Unicos, Citas_Unicas)
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 1 con Usuarios y Citas Únicas", 
+    col.names = c("Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(height = "400px")
+```
+## Merge 1 por año (Periodo de de evaluación en usuarios Fecha de inicio en citas)
+
+```{r}
+usuarios <- usuarios %>% mutate(YEAR = PERIODO_EVALUACION)
+citas_odonto <- citas_odonto %>%
+  mutate(
+    YEAR = as.numeric(format(FECHA_HORA_INICIO, "%Y")) # Extrae el año
+    )
+
+
+merge1.1 <- usuarios %>% distinct() %>%  
+  full_join(citas_odonto, by = c("ID_USUARIO","YEAR")) %>%
+  mutate(
+    MERGE_USUARIO_CITAS = case_when(
+      !is.na(SEXO_COD) & !is.na(ID_CITA) ~ "Usuarios y Citas",
+      !is.na(SEXO_COD) & is.na(ID_CITA) ~ "Solo usuarios",
+      is.na(SEXO_COD) & !is.na(ID_CITA) ~ "Solo citas",
+      TRUE ~ "No unida"
+    )
+  )
+
+# Crear una tabla resumen colapsada por YEAR
+tabla_resumen_year <- merge1.1 %>%
+  group_by(YEAR, MERGE_USUARIO_CITAS) %>%
+  summarise(
+    Frecuencia = n(), 
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T), # Contar IDs únicos de usuarios
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),      # Contar IDs únicos de citas
+    .groups = "drop"
+  ) %>%
+  group_by(YEAR) %>%
+  mutate(Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)) %>%
+  ungroup()
+
+# Crear la tabla kable
+tabla_kable <- tabla_resumen_year %>%
+  select(YEAR,MERGE_USUARIO_CITAS, Frecuencia, Porcentaje,  Usuarios_Unicos, Citas_Unicas) %>% # Asegurarse de usar las columnas correctas
+  arrange(YEAR, MERGE_USUARIO_CITAS) %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 1 por Año con Usuarios y Citas Únicos",
+    col.names = c("Año","Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  collapse_rows(columns = 1, valign = "top") %>% scroll_box(height = "400px") 
+
+tabla_kable
+```
+
+
+# Merge 2
+```{r}
+merge2 <- merge1 %>% distinct() %>%  
+  full_join(atencion_odonto, by = c(c("ID_USUARIO", "ID_CITA"))) %>%
+  mutate(
+    MERGE_MERGE1_ATENCION = case_when(
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) ~ "Usuarios, citas y atenciones",
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) ~ "Solo usuarios y citas",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) ~ "Solo citas y atencion",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) ~ "Solo usuarios y atencion",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) ~ "Solo usuarios",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) ~ "Solo citas",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) ~ "Solo atencion",
+      TRUE ~ "No unida"
+    )
+  )
+
+# Resumen del factor como tabla, incluyendo ID únicos
+tabla_resumen <- merge2 %>%
+  group_by(MERGE_MERGE1_ATENCION) %>%
+  summarise(
+    Frecuencia = n(),
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T),
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),
+    Atenciones_Unicas = n_distinct(ID_ATENCION, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  ) %>%
+  select(MERGE_MERGE1_ATENCION, Frecuencia, Porcentaje, Usuarios_Unicos, Citas_Unicas, Atenciones_Unicas)
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 2 con Usuarios , Citas y Atenciones Únicas", 
+    col.names = c("Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas", "Atenciones Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(height = "400px")
+
+```
+
+## Merge 2 por año (Periodo de de evaluación en usuarios, Fecha de inicio en citas, Fecha de inicio de atención en atenciones)
+```{r}
+atencion_odonto <- atencion_odonto %>%
+  mutate(
+    YEAR = as.numeric(format(FECHA_HORA_INICIO_INICIO_ATENCION , "%Y")) # Extrae el año
+    )
+
+merge2.1 <- merge1.1 %>%  
+  full_join(atencion_odonto, by = c(c("ID_USUARIO", "ID_CITA", "YEAR"))) %>%
+  mutate(
+    MERGE_MERGE1_ATENCION = case_when(
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) ~ "Usuarios, citas y atenciones",
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) ~ "Solo usuarios y citas",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) ~ "Solo citas y atencion",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) ~ "Solo usuarios y atencion",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) ~ "Solo usuarios",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) ~ "Solo citas",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) ~ "Solo atencion",
+      TRUE ~ "No unida"
+    )
+  )
+
+# Crear una tabla resumen colapsada por YEAR
+tabla_resumen_year <- merge2.1 %>%
+  group_by(YEAR, MERGE_MERGE1_ATENCION ) %>%
+  summarise(
+    Frecuencia = n(), 
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T), # Contar IDs únicos de usuarios
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),      # Contar IDs únicos de citas
+    Atenciones_Unicas = n_distinct(ID_ATENCION, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  group_by(YEAR) %>%
+  mutate(Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)) %>%
+  ungroup()
+
+# Crear la tabla kable
+tabla_kable <- tabla_resumen_year %>%
+  select(YEAR,MERGE_MERGE1_ATENCION , Frecuencia, Porcentaje, Usuarios_Unicos, Citas_Unicas, Atenciones_Unicas) %>% # Asegurarse de usar las columnas correctas
+  arrange(YEAR, MERGE_MERGE1_ATENCION ) %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 2 por Año con Usuarios, Citas y Atenciones Únicas",
+    col.names = c("Año","Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas", "Atenciones Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  collapse_rows(columns = 1, valign = "top") %>% scroll_box(height = "400px") 
+
+tabla_kable
+```
+
+# Merge 3
+```{r}
+merge3 <- merge2 %>%
+  distinct() %>%  
+  full_join(indice_ceo, by = c("ID_USUARIO", "ID_ATENCION")) %>%
+  mutate(
+    MERGE_MERGE2_I_CEO = case_when(
+      # Todas presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Usuarios, citas, atenciones, índice ceo",
+      
+      # Usuarios, citas, atención (sin índice ceo)
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Usuarios, citas y atenciones",
+      
+      # Usuarios, citas, índice ceo (sin atención)
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Usuarios, citas e índice ceo",
+      
+      # Usuarios, atención, índice ceo (sin citas)
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Usuarios, atención e índice ceo",
+      
+      # Citas, atención, índice ceo (sin usuarios)
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Citas, atención e índice ceo",
+      
+      # Solo usuarios y citas
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo usuarios y citas",
+      
+      # Solo usuarios y atención
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo usuarios y atención",
+      
+      # Solo usuarios e índice ceo
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Solo usuarios e índice ceo",
+      
+      # Solo citas y atención
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo citas y atención",
+      
+      # Solo citas e índice ceo
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Solo citas e índice ceo",
+      
+      # Solo atención e índice ceo
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Solo atención e índice ceo",
+      
+      # Solo usuarios
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo usuarios",
+      
+      # Solo citas
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo citas",
+      
+      # Solo atención
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo atención",
+      
+      # Solo índice ceo
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Solo índice ceo",
+      
+      # Ninguna presente
+      TRUE ~ "No unida"
+    )
+  )
+
+# Resumen del factor como tabla, incluyendo ID únicos
+tabla_resumen <- merge3 %>%
+  group_by(MERGE_MERGE2_I_CEO) %>%
+  summarise(
+    Frecuencia = n(),
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T),
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),
+    Atenciones_Unicas = n_distinct(ID_ATENCION, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  ) %>%
+  select(MERGE_MERGE2_I_CEO, Frecuencia, Porcentaje, Usuarios_Unicos, Citas_Unicas, Atenciones_Unicas)
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 3 con Usuarios , Citas, Atenciones e Índice ceo.", 
+    col.names = c("Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas", "Atenciones Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(height = "400px")
+
+```
+## Merge 3.1 por año (Periodo de de evaluación en usuarios, Fecha de inicio en citas, Fecha de inicio de atención en atenciones, Fecha índice ceo)
+
+```{r}
+indice_ceo <- indice_ceo %>%
+  mutate(
+    YEAR = as.numeric(format(FECHA_APLICACION_INDICE_CEO, "%Y")) # Extrae el año
+    )
+
+merge3.1 <- merge2.1 %>%
+  distinct() %>%  
+  full_join(indice_ceo, by = c("ID_USUARIO", "ID_ATENCION", "YEAR")) %>%
+  mutate(
+    MERGE_MERGE2_I_CEO = case_when(
+      # Todas presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Usuarios, citas, atenciones, índice ceo",
+      
+      # Usuarios, citas, atención (sin índice ceo)
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Usuarios, citas y atenciones",
+      
+      # Usuarios, citas, índice ceo (sin atención)
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Usuarios, citas e índice ceo",
+      
+      # Usuarios, atención, índice ceo (sin citas)
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Usuarios, atención e índice ceo",
+      
+      # Citas, atención, índice ceo (sin usuarios)
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Citas, atención e índice ceo",
+      
+      # Solo usuarios y citas
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo usuarios y citas",
+      
+      # Solo usuarios y atención
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo usuarios y atención",
+      
+      # Solo usuarios e índice ceo
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Solo usuarios e índice ceo",
+      
+      # Solo citas y atención
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo citas y atención",
+      
+      # Solo citas e índice ceo
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Solo citas e índice ceo",
+      
+      # Solo atención e índice ceo
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Solo atención e índice ceo",
+      
+      # Solo usuarios
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo usuarios",
+      
+      # Solo citas
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo citas",
+      
+      # Solo atención
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & is.na(EDAD_APLICACION_CEO) ~ "Solo atención",
+      
+      # Solo índice ceo
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & !is.na(EDAD_APLICACION_CEO) ~ "Solo índice ceo",
+      
+      # Ninguna presente
+      TRUE ~ "No unida"
+    )
+  )
+
+# Crear una tabla resumen colapsada por YEAR
+tabla_resumen_year <- merge3.1 %>%
+  group_by(YEAR, MERGE_MERGE2_I_CEO) %>%
+  summarise(
+    Frecuencia = n(), 
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T), # Contar IDs únicos de usuarios
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),      # Contar IDs únicos de citas
+    Atenciones_Unicas = n_distinct(ID_ATENCION, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  group_by(YEAR) %>%
+  mutate(Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)) %>%
+  ungroup()
+
+# Crear la tabla kable
+tabla_kable <- tabla_resumen_year %>%
+  select(YEAR,MERGE_MERGE2_I_CEO, Frecuencia, Porcentaje, Usuarios_Unicos, Citas_Unicas, Atenciones_Unicas) %>% # Asegurarse de usar las columnas correctas
+  arrange(YEAR, MERGE_MERGE2_I_CEO) %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 3 por Año con Usuarios, Citas, Atenciones e Índice ceo",
+    col.names = c("Año","Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas", "Atenciones Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  collapse_rows(columns = 1, valign = "top") %>% scroll_box(height = "400px") 
+
+tabla_kable
+```
+
+# Merge 4
+
+```{r}
+merge4 <- merge3 %>%
+  distinct() %>%  
+  full_join(pauta_cero, by = c("ID_USUARIO", "ID_ATENCION")) %>%
+  mutate(
+    MERGE_MERGE3_P_CERO = case_when(
+      # Todas presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, citas, atenciones, índice ceo, pauta CERO",
+      
+      # Combinaciones de cuatro variables presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Usuarios, citas, atenciones e índice ceo",
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, citas, atenciones y pauta CERO",
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, citas, índice ceo y pauta CERO",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, atención, índice ceo y pauta CERO",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Citas, atención, índice ceo y pauta CERO",
+      
+      # Combinaciones de tres variables presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Usuarios, citas y atenciones",
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Usuarios, citas e índice ceo",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Usuarios, atención e índice ceo",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, índice ceo y pauta CERO",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Citas, atención e índice ceo",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Citas, atención y pauta CERO",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Citas, índice ceo y pauta CERO",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Atención, índice ceo y pauta CERO",
+      
+      # Combinaciones de dos variables presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo usuarios y citas",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo usuarios y atención",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo usuarios e índice ceo",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo usuarios y pauta CERO",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo citas y atención",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo citas e índice ceo",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo citas y pauta CERO",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo atención e índice ceo",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo atención y pauta CERO",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo índice ceo y pauta CERO",
+      
+      # Combinaciones de una sola variable presente
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo usuarios",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo citas",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo atención",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo índice ceo",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo pauta CERO",
+      
+      # Ninguna presente
+      TRUE ~ "No unida"
+    )
+  )
+
+# Resumen del factor como tabla, incluyendo ID únicos
+tabla_resumen <- merge4 %>%
+  group_by(MERGE_MERGE3_P_CERO) %>%
+  summarise(
+    Frecuencia = n(),
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T),
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),
+    Atenciones_Unicas = n_distinct(ID_ATENCION, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  ) %>%
+  select(MERGE_MERGE3_P_CERO, Frecuencia, Porcentaje, Usuarios_Unicos, Citas_Unicas, Atenciones_Unicas)
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 4 con Usuarios , Citas, Atenciones, Índice ceo y Pauta Cero", 
+    col.names = c("Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas", "Atenciones Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(height = "400px")
+
+
+```
+## Merge 4.1 por año (Periodo de de evaluación en usuarios, Fecha de inicio en citas, Fecha de inicio de atención en atenciones, Fecha índice ceo y pauta cero)
+
+```{r}
+pauta_cero <- pauta_cero %>%
+  mutate(
+    YEAR = as.numeric(format(FECHA_APLICACION_PAUTA_CERO, "%Y")) # Extrae el año
+    )
+
+merge4.1 <- merge3.1 %>%
+  distinct() %>%  
+  full_join(pauta_cero, by = c("ID_USUARIO", "ID_ATENCION", "YEAR")) %>%
+  mutate(
+    MERGE_MERGE3_P_CERO = case_when(
+      # Todas presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, citas, atenciones, índice ceo, pauta CERO",
+      
+      # Combinaciones de cuatro variables presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Usuarios, citas, atenciones e índice ceo",
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, citas, atenciones y pauta CERO",
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, citas, índice ceo y pauta CERO",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, atención, índice ceo y pauta CERO",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Citas, atención, índice ceo y pauta CERO",
+      
+      # Combinaciones de tres variables presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Usuarios, citas y atenciones",
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Usuarios, citas e índice ceo",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Usuarios, atención e índice ceo",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Usuarios, índice ceo y pauta CERO",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Citas, atención e índice ceo",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Citas, atención y pauta CERO",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Citas, índice ceo y pauta CERO",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Atención, índice ceo y pauta CERO",
+      
+      # Combinaciones de dos variables presentes
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo usuarios y citas",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo usuarios y atención",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo usuarios e índice ceo",
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo usuarios y pauta CERO",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo citas y atención",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo citas e índice ceo",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo citas y pauta CERO",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo atención e índice ceo",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo atención y pauta CERO",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo índice ceo y pauta CERO",
+      
+      # Combinaciones de una sola variable presente
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo usuarios",
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo citas",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo atención",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) ~ "Solo índice ceo",
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) & 
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) ~ "Solo pauta CERO",
+      
+      # Ninguna presente
+      TRUE ~ "No unida"
+    )
+  )
+
+
+# Crear una tabla resumen colapsada por YEAR
+tabla_resumen_year <- merge4.1 %>%
+  group_by(YEAR, MERGE_MERGE3_P_CERO) %>%
+  summarise(
+    Frecuencia = n(), 
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T), # Contar IDs únicos de usuarios
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),      # Contar IDs únicos de citas
+    Atenciones_Unicas = n_distinct(ID_ATENCION, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  group_by(YEAR) %>%
+  mutate(Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)) %>%
+  ungroup()
+
+# Crear la tabla kable
+tabla_kable <- tabla_resumen_year %>%
+  select(YEAR,MERGE_MERGE3_P_CERO, Frecuencia, Porcentaje, Usuarios_Unicos, Citas_Unicas, Atenciones_Unicas) %>% # Asegurarse de usar las columnas correctas
+  arrange(YEAR, MERGE_MERGE3_P_CERO) %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 4 por Año con Usuarios, Citas y Atenciones Únicas",
+    col.names = c("Año","Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas", "Atenciones Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  collapse_rows(columns = 1, valign = "top") %>% scroll_box(height = "400px") 
+tabla_kable
+```
+
+# Merge 5
+```{r}
+merge5 <- merge4 %>%
+  left_join(control_sano_odonto, by = c("ID_USUARIO")) %>%
+  mutate(
+    MERGE_MERGE4_P_CERO_CONTROL = case_when(
+
+      # ----------------------------------------------------------------------------
+      # 1) TODAS LAS 6 VARIABLES PRESENTES -----------------------------------------
+      # ----------------------------------------------------------------------------
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~ 
+        "Usuarios, citas, atenciones, índice ceo, pauta CERO y control sano odonto.",
+
+      # ----------------------------------------------------------------------------
+      # 2) 5 VARIABLES PRESENTES (6 combinaciones posibles) -------------------------
+      # ----------------------------------------------------------------------------
+      # Falta SEXO_COD
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_CITA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_ATENCION
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones, pauta CERO y control sano odonto.",
+
+      # Falta FNP_ID
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones, índice ceo y control sano odonto.",
+
+      # Falta FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones, índice ceo y pauta CERO",
+
+      # ----------------------------------------------------------------------------
+      # 3) 4 VARIABLES PRESENTES (15 combinaciones) ---------------------------------
+      #    A continuación listamos los pares que faltan.
+      # ----------------------------------------------------------------------------
+
+      # Falta SEXO_COD, ESTADO_CITA
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Atenciones, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta SEXO_COD, ESTADO_ATENCION
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta SEXO_COD, EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones, pauta CERO y control sano odonto.",
+
+      # Falta SEXO_COD, FNP_ID
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones, índice ceo y control sano odonto.",
+
+      # Falta SEXO_COD, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones, índice ceo y pauta CERO",
+
+      # Falta ESTADO_CITA, ESTADO_ATENCION
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_CITA, EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_CITA, FNP_ID
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones, índice ceo y control sano odonto.",
+
+      # Falta ESTADO_CITA, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones, índice ceo y pauta CERO",
+
+      # Falta ESTADO_ATENCION, EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_ATENCION, FNP_ID
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, índice ceo y control sano odonto.",
+
+      # Falta ESTADO_ATENCION, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, índice ceo y pauta CERO",
+
+      # Falta EDAD_APLICACION_CEO, FNP_ID
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones y control sano odonto.",
+
+      # Falta EDAD_APLICACION_CEO, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones y pauta CERO",
+
+      # Falta FNP_ID, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones e índice ceo",
+
+      # ----------------------------------------------------------------------------
+      # 4) 3 VARIABLES PRESENTES (20 combinaciones) ---------------------------------
+      #    Ahora faltan 3 variables; se etiquetan según las 3 ausentes.
+      # ----------------------------------------------------------------------------
+
+      # (a) Falta SEXO_COD, ESTADO_CITA, ESTADO_ATENCION
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Índice ceo, pauta CERO y control sano odonto.",
+
+      # (b) Falta SEXO_COD, ESTADO_CITA, EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Atenciones, pauta CERO y control sano odonto.",
+
+      # (c) Falta SEXO_COD, ESTADO_CITA, FNP_ID
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Atenciones, índice ceo y control sano odonto.",
+
+      # (d) Falta SEXO_COD, ESTADO_CITA, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Atenciones, índice ceo y pauta CERO",
+
+      # (e) Falta SEXO_COD, ESTADO_ATENCION, EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, pauta CERO y control sano odonto.",
+
+      # (f) Falta SEXO_COD, ESTADO_ATENCION, FNP_ID
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, índice ceo y control sano odonto.",
+
+      # (g) Falta SEXO_COD, ESTADO_ATENCION, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, índice ceo y pauta CERO",
+
+      # (h) Falta SEXO_COD, EDAD_APLICACION_CEO, FNP_ID
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones y control sano odonto.",
+
+      # (i) Falta SEXO_COD, EDAD_APLICACION_CEO, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones y pauta CERO",
+
+      # (j) Falta SEXO_COD, FNP_ID, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones e índice ceo",
+
+      # (k) Falta ESTADO_CITA, ESTADO_ATENCION, EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, pauta CERO y control sano odonto.",
+
+      # (l) Falta ESTADO_CITA, ESTADO_ATENCION, FNP_ID
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, índice ceo y control sano odonto.",
+
+      # (m) Falta ESTADO_CITA, ESTADO_ATENCION, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, índice ceo y pauta CERO",
+
+      # (n) Falta ESTADO_CITA, EDAD_APLICACION_CEO, FNP_ID
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones y control sano odonto.",
+
+      # (o) Falta ESTADO_CITA, EDAD_APLICACION_CEO, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones y pauta CERO",
+
+      # (p) Falta ESTADO_CITA, FNP_ID, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones e índice ceo",
+
+      # (q) Falta ESTADO_ATENCION, EDAD_APLICACION_CEO, FNP_ID
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas y control sano odonto.",
+
+      # (r) Falta ESTADO_ATENCION, EDAD_APLICACION_CEO, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas y pauta CERO",
+
+      # (s) Falta ESTADO_ATENCION, FNP_ID, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas e índice ceo",
+
+      # (t) Falta EDAD_APLICACION_CEO, FNP_ID, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas y atenciones",
+
+      # ----------------------------------------------------------------------------
+      # 5) 2 VARIABLES PRESENTES (15 combinaciones) ---------------------------------
+      #    Ahora faltan 4 variables; indicamos cuáles 2 están presentes.
+      # ----------------------------------------------------------------------------
+
+      # (a) SOLO SEXO_COD y ESTADO_CITA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios y citas",
+
+      # (b) SOLO SEXO_COD y ESTADO_ATENCION
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios y atenciones",
+
+      # (c) SOLO SEXO_COD y EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios e índice ceo",
+
+      # (d) SOLO SEXO_COD y FNP_ID
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios y pauta CERO",
+
+      # (e) SOLO SEXO_COD y control sano odonto.
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios y control sano odonto.",
+
+      # (f) SOLO ESTADO_CITA y ESTADO_ATENCION
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas y atenciones",
+
+      # (g) SOLO ESTADO_CITA y EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas e índice ceo",
+
+      # (h) SOLO ESTADO_CITA y FNP_ID
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas y pauta CERO",
+
+      # (i) SOLO ESTADO_CITA y control sano odonto.
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas y control sano odonto.",
+
+      # (j) SOLO ESTADO_ATENCION y EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo atenciones e índice ceo",
+
+      # (k) SOLO ESTADO_ATENCION y FNP_ID
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo atenciones y pauta CERO",
+
+      # (l) SOLO ESTADO_ATENCION y control sano odonto.
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo atenciones y control sano odonto.",
+
+      # (m) SOLO EDAD_APLICACION_CEO y FNP_ID
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo índice ceo y pauta CERO",
+
+      # (n) SOLO EDAD_APLICACION_CEO y control sano odonto.
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo índice ceo y control sano odonto.",
+
+      # (o) SOLO FNP_ID y control sano odonto.
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo pauta CERO y control sano odonto.",
+
+      # ----------------------------------------------------------------------------
+      # 6) 1 VARIABLE PRESENTE (6 combinaciones) ------------------------------------
+      # ----------------------------------------------------------------------------
+
+      # (a) SOLO SEXO_COD
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios",
+
+      # (b) SOLO ESTADO_CITA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas",
+
+      # (c) SOLO ESTADO_ATENCION
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo atenciones",
+
+      # (d) SOLO EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo índice ceo",
+
+      # (e) SOLO FNP_ID
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo pauta CERO",
+
+      # (f) SOLO FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo FECHA_APLICACION_PAUTA",
+
+      # ----------------------------------------------------------------------------
+      # 7) NINGUNA VARIABLE PRESENTE -----------------------------------------------
+      # ----------------------------------------------------------------------------
+      TRUE ~ "No unida"
+    )
+  )
+
+# Resumen del factor como tabla, incluyendo ID únicos
+tabla_resumen <- merge5 %>%
+  group_by(MERGE_MERGE4_P_CERO_CONTROL) %>%
+  summarise(
+    Frecuencia = n(),
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T),
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),      # Contar IDs únicos de citas
+    Atenciones_Unicas = n_distinct(ID_ATENCION.x, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  ) %>%
+  select(MERGE_MERGE4_P_CERO_CONTROL, Frecuencia, Porcentaje, Usuarios_Unicos, Citas_Unicas, Atenciones_Unicas)
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 4 con Usuarios , Citas, Atenciones, Índice ceo y Pauta Cero", 
+    col.names = c("Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas", "Atenciones Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(height = "400px")
+
+```
+
+## Merge 5.1
+```{r}
+control_sano_odonto <- control_sano_odonto %>%
+  mutate(
+    YEAR = as.numeric(format(FECHA_APLICACION_PAUTA, "%Y")) # Extrae el año
+    )
+
+merge5.1 <- merge4.1 %>%
+  left_join(control_sano_odonto, by = c("ID_USUARIO", "YEAR")) %>%
+  mutate(
+    MERGE_MERGE4_P_CERO_CONTROL = case_when(
+
+      # ----------------------------------------------------------------------------
+      # 1) TODAS LAS 6 VARIABLES PRESENTES -----------------------------------------
+      # ----------------------------------------------------------------------------
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~ 
+        "Usuarios, citas, atenciones, índice ceo, pauta CERO y control sano odonto.",
+
+      # ----------------------------------------------------------------------------
+      # 2) 5 VARIABLES PRESENTES (6 combinaciones posibles) -------------------------
+      # ----------------------------------------------------------------------------
+      # Falta SEXO_COD
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_CITA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_ATENCION
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones, pauta CERO y control sano odonto.",
+
+      # Falta FNP_ID
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones, índice ceo y control sano odonto.",
+
+      # Falta FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones, índice ceo y pauta CERO",
+
+      # ----------------------------------------------------------------------------
+      # 3) 4 VARIABLES PRESENTES (15 combinaciones) ---------------------------------
+      #    A continuación listamos los pares que faltan.
+      # ----------------------------------------------------------------------------
+
+      # Falta SEXO_COD, ESTADO_CITA
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Atenciones, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta SEXO_COD, ESTADO_ATENCION
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta SEXO_COD, EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones, pauta CERO y control sano odonto.",
+
+      # Falta SEXO_COD, FNP_ID
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones, índice ceo y control sano odonto.",
+
+      # Falta SEXO_COD, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones, índice ceo y pauta CERO",
+
+      # Falta ESTADO_CITA, ESTADO_ATENCION
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, índice ceo, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_CITA, EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_CITA, FNP_ID
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones, índice ceo y control sano odonto.",
+
+      # Falta ESTADO_CITA, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones, índice ceo y pauta CERO",
+
+      # Falta ESTADO_ATENCION, EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, pauta CERO y control sano odonto.",
+
+      # Falta ESTADO_ATENCION, FNP_ID
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, índice ceo y control sano odonto.",
+
+      # Falta ESTADO_ATENCION, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, índice ceo y pauta CERO",
+
+      # Falta EDAD_APLICACION_CEO, FNP_ID
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones y control sano odonto.",
+
+      # Falta EDAD_APLICACION_CEO, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones y pauta CERO",
+
+      # Falta FNP_ID, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas, atenciones e índice ceo",
+
+      # ----------------------------------------------------------------------------
+      # 4) 3 VARIABLES PRESENTES (20 combinaciones) ---------------------------------
+      #    Ahora faltan 3 variables; se etiquetan según las 3 ausentes.
+      # ----------------------------------------------------------------------------
+
+      # (a) Falta SEXO_COD, ESTADO_CITA, ESTADO_ATENCION
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Índice ceo, pauta CERO y control sano odonto.",
+
+      # (b) Falta SEXO_COD, ESTADO_CITA, EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Atenciones, pauta CERO y control sano odonto.",
+
+      # (c) Falta SEXO_COD, ESTADO_CITA, FNP_ID
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Atenciones, índice ceo y control sano odonto.",
+
+      # (d) Falta SEXO_COD, ESTADO_CITA, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Atenciones, índice ceo y pauta CERO",
+
+      # (e) Falta SEXO_COD, ESTADO_ATENCION, EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, pauta CERO y control sano odonto.",
+
+      # (f) Falta SEXO_COD, ESTADO_ATENCION, FNP_ID
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, índice ceo y control sano odonto.",
+
+      # (g) Falta SEXO_COD, ESTADO_ATENCION, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, índice ceo y pauta CERO",
+
+      # (h) Falta SEXO_COD, EDAD_APLICACION_CEO, FNP_ID
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones y control sano odonto.",
+
+      # (i) Falta SEXO_COD, EDAD_APLICACION_CEO, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones y pauta CERO",
+
+      # (j) Falta SEXO_COD, FNP_ID, FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Citas, atenciones e índice ceo",
+
+      # (k) Falta ESTADO_CITA, ESTADO_ATENCION, EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, pauta CERO y control sano odonto.",
+
+      # (l) Falta ESTADO_CITA, ESTADO_ATENCION, FNP_ID
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, índice ceo y control sano odonto.",
+
+      # (m) Falta ESTADO_CITA, ESTADO_ATENCION, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, índice ceo y pauta CERO",
+
+      # (n) Falta ESTADO_CITA, EDAD_APLICACION_CEO, FNP_ID
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones y control sano odonto.",
+
+      # (o) Falta ESTADO_CITA, EDAD_APLICACION_CEO, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones y pauta CERO",
+
+      # (p) Falta ESTADO_CITA, FNP_ID, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, atenciones e índice ceo",
+
+      # (q) Falta ESTADO_ATENCION, EDAD_APLICACION_CEO, FNP_ID
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas y control sano odonto.",
+
+      # (r) Falta ESTADO_ATENCION, EDAD_APLICACION_CEO, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas y pauta CERO",
+
+      # (s) Falta ESTADO_ATENCION, FNP_ID, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas e índice ceo",
+
+      # (t) Falta EDAD_APLICACION_CEO, FNP_ID, FECHA_APLICACION_PAUTA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Usuarios, citas y atenciones",
+
+      # ----------------------------------------------------------------------------
+      # 5) 2 VARIABLES PRESENTES (15 combinaciones) ---------------------------------
+      #    Ahora faltan 4 variables; indicamos cuáles 2 están presentes.
+      # ----------------------------------------------------------------------------
+
+      # (a) SOLO SEXO_COD y ESTADO_CITA
+      !is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios y citas",
+
+      # (b) SOLO SEXO_COD y ESTADO_ATENCION
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios y atenciones",
+
+      # (c) SOLO SEXO_COD y EDAD_APLICACION_CEO
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios e índice ceo",
+
+      # (d) SOLO SEXO_COD y FNP_ID
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios y pauta CERO",
+
+      # (e) SOLO SEXO_COD y control sano odonto.
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios y control sano odonto.",
+
+      # (f) SOLO ESTADO_CITA y ESTADO_ATENCION
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas y atenciones",
+
+      # (g) SOLO ESTADO_CITA y EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas e índice ceo",
+
+      # (h) SOLO ESTADO_CITA y FNP_ID
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas y pauta CERO",
+
+      # (i) SOLO ESTADO_CITA y control sano odonto.
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas y control sano odonto.",
+
+      # (j) SOLO ESTADO_ATENCION y EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo atenciones e índice ceo",
+
+      # (k) SOLO ESTADO_ATENCION y FNP_ID
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo atenciones y pauta CERO",
+
+      # (l) SOLO ESTADO_ATENCION y control sano odonto.
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo atenciones y control sano odonto.",
+
+      # (m) SOLO EDAD_APLICACION_CEO y FNP_ID
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo índice ceo y pauta CERO",
+
+      # (n) SOLO EDAD_APLICACION_CEO y control sano odonto.
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo índice ceo y control sano odonto.",
+
+      # (o) SOLO FNP_ID y control sano odonto.
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo pauta CERO y control sano odonto.",
+
+      # ----------------------------------------------------------------------------
+      # 6) 1 VARIABLE PRESENTE (6 combinaciones) ------------------------------------
+      # ----------------------------------------------------------------------------
+
+      # (a) SOLO SEXO_COD
+      !is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo usuarios",
+
+      # (b) SOLO ESTADO_CITA
+      is.na(SEXO_COD) & !is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo citas",
+
+      # (c) SOLO ESTADO_ATENCION
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & !is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo atenciones",
+
+      # (d) SOLO EDAD_APLICACION_CEO
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      !is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo índice ceo",
+
+      # (e) SOLO FNP_ID
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & !is.na(FNP_ID) & is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo pauta CERO",
+
+      # (f) SOLO FECHA_APLICACION_PAUTA
+      is.na(SEXO_COD) & is.na(ESTADO_CITA) & is.na(ESTADO_ATENCION) &
+      is.na(EDAD_APLICACION_CEO) & is.na(FNP_ID) & !is.na(FECHA_APLICACION_PAUTA) ~
+        "Solo FECHA_APLICACION_PAUTA",
+
+      # ----------------------------------------------------------------------------
+      # 7) NINGUNA VARIABLE PRESENTE -----------------------------------------------
+      # ----------------------------------------------------------------------------
+      TRUE ~ "No unida"
+    )
+  )
+
+# Resumen del factor como tabla, incluyendo ID únicos
+tabla_resumen <- merge5.1 %>%
+  group_by(MERGE_MERGE4_P_CERO_CONTROL) %>%
+  summarise(
+    Frecuencia = n(),
+    Usuarios_Unicos = n_distinct(ID_USUARIO, na.rm = T),
+    Citas_Unicas = n_distinct(ID_CITA, na.rm = T),
+    Atenciones_Unicas = n_distinct(ID_ATENCION.x, na.rm = T),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  ) %>%
+  select(MERGE_MERGE4_P_CERO_CONTROL, Frecuencia, Porcentaje, Usuarios_Unicos, Citas_Unicas, Atenciones_Unicas)
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 5 con Usuarios , Citas, Atenciones, Índice ceo y Pauta Cero", 
+    col.names = c("Categoría", "Frecuencia","Porcentaje (%)", "Usuarios Únicos", "Citas Únicas", "Atenciones Únicas"),
+    align = "c"
+  ) %>% 
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  scroll_box(height = "400px")
+
+```
+
+# Otros
+
+```{r}
+merge3.1solocyat <-merge3.1 %>% filter(MERGE_MERGE2_I_CEO == "Solo citas y atención" & YEAR==2018)
+merge4.1solopc <-merge4.1 %>% filter(MERGE_MERGE3_P_CERO == "Solo pauta CERO" & YEAR==2024)
+
+# Mostrar las tablas de manera interactiva
+datatable(merge3.1solocyat, 
+          caption = "Datos de Solo citas y atención 2018",
+          options = list(pageLength = 10,  # número de filas por página
+                        scrollX = TRUE,     # scroll horizontal
+                        searching = TRUE))  # barra de búsqueda
+
+
+# 1) En la tabla 'usuarios', creamos una marca SI/NO si ID_USUARIO aparece en 'merge3.1solocyat'
+usuarios_flag <- usuarios %>%
+  mutate(
+    en_merge3_1solocyat = ifelse(ID_USUARIO %in% merge3.1solocyat$ID_USUARIO, "SI", "NO")
+  )
+
+# 2) Contamos cuántos usuarios hay en cada PERIODO_EVALUACION, separados en SI/NO
+df_conteo <- usuarios_flag %>%
+  group_by(PERIODO_EVALUACION, en_merge3_1solocyat) %>%
+  summarise(num_usuarios = n_distinct(ID_USUARIO), .groups = "drop")
+
+# 3) Calculamos el total de cada PERIODO_EVALUACION (para anotarlo encima de cada barra)
+df_totales <- df_conteo %>%
+  group_by(PERIODO_EVALUACION) %>%
+  summarise(total_barra = sum(num_usuarios), .groups = "drop")
+
+# 4) Graficar: barras apiladas + etiquetas internas + etiqueta total en la cima
+ggplot(df_conteo, 
+       aes(x = factor(PERIODO_EVALUACION),
+           y = num_usuarios,
+           fill = en_merge3_1solocyat)) +
+  geom_bar(stat = "identity", position = "stack") +
+  
+  # (A) Etiqueta de cada segmento apilado
+  geom_text(aes(label = num_usuarios),
+            position = position_stack(vjust = 0.5),
+            color = "purple") +
+  
+  # (B) Etiqueta del total arriba de la barra
+  geom_text(data = df_totales,
+            aes(x = factor(PERIODO_EVALUACION),
+                y = total_barra,
+                label = total_barra),
+            inherit.aes = FALSE,
+            vjust = -0.5) +
+  
+  labs(
+    x    = "PERIODO_EVALUACION",
+    y    = "Cantidad de ID_USUARIO",
+    fill = "¿Está el ID_USUARIO de merge Solo citas y atención 2018?"
+  ) +
+  theme_minimal()
+
+
+
+datatable(merge4.1solopc, 
+          caption = "Datos de Solo pauta CERO 2024",
+          options = list(pageLength = 10,
+                        scrollX = TRUE,
+                        searching = TRUE))
+# 1) En la tabla 'usuarios', creamos una marca SI/NO si ID_USUARIO aparece en 'merge3.1solocyat'
+usuarios_flag <- usuarios %>%
+  mutate(
+    en_merge4.1solopc = ifelse(ID_USUARIO %in% merge4.1solopc , "SI", "NO")
+  )
+
+# 2) Contamos cuántos usuarios hay en cada PERIODO_EVALUACION, separados en SI/NO
+df_conteo <- usuarios_flag %>%
+  group_by(PERIODO_EVALUACION, en_merge4.1solopc) %>%
+  summarise(num_usuarios = n_distinct(ID_USUARIO), .groups = "drop")
+
+# 3) Calculamos el total de cada PERIODO_EVALUACION (para anotarlo encima de cada barra)
+df_totales <- df_conteo %>%
+  group_by(PERIODO_EVALUACION) %>%
+  summarise(total_barra = sum(num_usuarios), .groups = "drop")
+
+# 4) Graficar: barras apiladas + etiquetas internas + etiqueta total en la cima
+ggplot(df_conteo, 
+       aes(x = factor(PERIODO_EVALUACION),
+           y = num_usuarios,
+           fill = en_merge4.1solopc)) +
+  geom_bar(stat = "identity", position = "stack") +
+  
+  # (A) Etiqueta de cada segmento apilado
+  geom_text(aes(label = num_usuarios),
+            position = position_stack(vjust = 0.5),
+            color = "purple") +
+  
+  # (B) Etiqueta del total arriba de la barra
+  geom_text(data = df_totales,
+            aes(x = factor(PERIODO_EVALUACION),
+                y = total_barra,
+                label = total_barra),
+            inherit.aes = FALSE,
+            vjust = -0.5) +
+  
+  labs(
+    x    = "PERIODO_EVALUACION",
+    y    = "Cantidad de ID_USUARIO",
+    fill = "¿Está el ID_USUARIO del merge solo pauta cero 2024?"
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+
+# 1) Filtramos solo las filas con años 2015 a 2024
+df_filtrada <- usuarios %>%
+  filter(PERIODO_EVALUACION >= 2010 & PERIODO_EVALUACION <= 2024)
+
+# 2) Para cada usuario, definimos "cohorte" como el primer año en el que aparece en este rango
+#    Luego nos quedamos con (ID_USUARIO, PERIODO_EVALUACION y cohorte) sin duplicados.
+df_cohortes <- df_filtrada %>%
+  group_by(ID_USUARIO) %>%
+  mutate(cohorte = min(PERIODO_EVALUACION)) %>%
+  ungroup() %>%
+  distinct(ID_USUARIO, PERIODO_EVALUACION, cohorte)
+
+# 3) Contamos cuántos usuarios de cada cohorte aparecen en cada PERIODO_EVALUACION
+df_conteo <- df_cohortes %>%
+  group_by(cohorte, PERIODO_EVALUACION) %>%
+  summarise(num_usuarios = n_distinct(ID_USUARIO), .groups = "drop")
+
+
+df_totales <- df_conteo %>%
+  group_by(PERIODO_EVALUACION) %>%
+  summarise(total_barra = sum(num_usuarios))
+
+
+ggplot(
+  data = df_conteo,
+  aes(
+    x   = factor(PERIODO_EVALUACION),
+    y   = num_usuarios,
+    fill= factor(cohorte)
+  )
+) +
+  geom_bar(stat = "identity", position = "stack") +
+  
+  geom_text(
+    aes(label = num_usuarios),
+    position = position_stack(vjust = 0.5),
+    size = 3.5,
+    color = "white"
+  ) +
+  
+  geom_text(
+    data = df_totales,
+    # Para la capa de totales anulas la herencia
+    aes(
+      x     = factor(PERIODO_EVALUACION),
+      y     = total_barra,
+      label = total_barra
+    ),
+    inherit.aes = FALSE, # ignora fill=factor(cohorte)
+    vjust = -0.5,
+    size  = 3.5
+  ) +
+  
+  labs(
+    x = "Año de evaluación",
+    y = "Número de usuarios",
+    fill = "Cohorte (año de primera aparición)"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# 1) Filtramos solo las filas con años 2015 a 2024
+df_filtrada <- usuarios %>%
+  filter(PERIODO_EVALUACION >= 2015 & PERIODO_EVALUACION <= 2024)
+
+# 2) Para cada usuario, definimos "cohorte" como el primer año en el que aparece en este rango
+#    Luego nos quedamos con (ID_USUARIO, PERIODO_EVALUACION y cohorte) sin duplicados.
+df_cohortes <- df_filtrada %>%
+  group_by(ID_USUARIO) %>%
+  mutate(cohorte = min(PERIODO_EVALUACION)) %>%
+  ungroup() %>%
+  distinct(ID_USUARIO, PERIODO_EVALUACION, cohorte)
+
+# 3) Contamos cuántos usuarios de cada cohorte aparecen en cada PERIODO_EVALUACION
+df_conteo <- df_cohortes %>%
+  group_by(cohorte, PERIODO_EVALUACION) %>%
+  summarise(num_usuarios = n_distinct(ID_USUARIO), .groups = "drop")
+
+
+df_totales <- df_conteo %>%
+  group_by(PERIODO_EVALUACION) %>%
+  summarise(total_barra = sum(num_usuarios))
+
+
+ggplot(
+  data = df_conteo,
+  aes(
+    x   = factor(PERIODO_EVALUACION),
+    y   = num_usuarios,
+    fill= factor(cohorte)
+  )
+) +
+  geom_bar(stat = "identity", position = "stack") +
+  
+  geom_text(
+    aes(label = num_usuarios),
+    position = position_stack(vjust = 0.5),
+    size = 3.5,
+    color = "white"
+  ) +
+  
+  geom_text(
+    data = df_totales,
+    # Para la capa de totales anulas la herencia
+    aes(
+      x     = factor(PERIODO_EVALUACION),
+      y     = total_barra,
+      label = total_barra
+    ),
+    inherit.aes = FALSE, # ignora fill=factor(cohorte)
+    vjust = -0.5,
+    size  = 3.5
+  ) +
+  
+  labs(
+    x = "Año de evaluación",
+    y = "Número de usuarios",
+    fill = "Cohorte (año de primera aparición)"
+  ) +
+  theme_minimal()
+```
+
+# Validados FONASA
+
+```{r}
+
+# 1) Filtramos filas con años 2017 a 2024
+df_filtrada <- usuarios %>%
+  filter(PERIODO_EVALUACION >= 2015 & PERIODO_EVALUACION <= 2024) %>%
+  mutate(
+    grupo_validacion = if_else(
+      TIPO_INSCRIPCION == "Validado Fonasa",
+      "Validados fonasa",
+      "Otros/NA"
+    )
+  )
+
+# 2) Para cada usuario y cada grupo de validación, definimos "cohorte"
+#    como el primer año en que aparece en este rango
+#    y nos quedamos con filas únicas en (ID_USUARIO, PERIODO_EVALUACION, cohorte, grupo_validacion).
+df_cohortes <- df_filtrada %>%
+  group_by(ID_USUARIO) %>%
+  mutate(cohorte = min(PERIODO_EVALUACION)) %>%
+  ungroup() %>%
+  distinct(ID_USUARIO, PERIODO_EVALUACION, cohorte, grupo_validacion)
+
+# 3) Contamos cuántos usuarios de cada cohorte aparecen en cada PERIODO_EVALUACION y grupo de validación
+df_conteo <- df_cohortes %>%
+  group_by(grupo_validacion, cohorte, PERIODO_EVALUACION) %>%
+  summarise(num_usuarios = n_distinct(ID_USUARIO), .groups = "drop")
+
+# 4) Calculamos el total anual por cada grupo de validación
+df_totales <- df_conteo %>%
+  group_by(grupo_validacion, PERIODO_EVALUACION) %>%
+  summarise(total_barra = sum(num_usuarios), .groups = "drop")
+
+# 5) Gráfico de barras apiladas por cohorte, en facetas según grupo_validacion
+ggplot(data = df_conteo,
+       aes(x = factor(PERIODO_EVALUACION),
+           y = num_usuarios,
+           fill = factor(cohorte))) +
+  geom_bar(stat = "identity", position = "stack") +
+  
+  # Etiquetas para cada segmento dentro de las barras
+  geom_text(
+    aes(label = num_usuarios),
+    position = position_stack(vjust = 0.5),
+    size = 3.5,
+    color = "white"
+  ) +
+  
+  # Etiquetas de totales anuales (por faceta)
+  geom_text(
+    data = df_totales,
+    aes(x     = factor(PERIODO_EVALUACION),
+        y     = total_barra,
+        label = total_barra),
+    inherit.aes = FALSE, # para que no use fill = factor(cohorte)
+    vjust = -0.5,
+    size  = 3.5
+  ) +
+  
+  # Facet por "Validados fonasa" y "Otros/NA"
+  facet_wrap(~ grupo_validacion) +
+  
+  labs(
+    x    = "Año de evaluación",
+    y    = "Número de usuarios",
+    fill = "Cohorte (primer año en que aparece)"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# 1) Filtrar filas donde año de evaluación coincide con la cohorte (inicio)
+df_inicial <- df_cohortes %>%
+  filter(PERIODO_EVALUACION == cohorte)
+
+# 2) Agrupar y contar usuarios por cohorte y tipo de validación
+df_inicial_conteo <- df_inicial %>%
+  group_by(cohorte, grupo_validacion) %>%
+  summarise(num_usuarios = n_distinct(ID_USUARIO), .groups = "drop")
+
+# 3) Calcular el total de cada cohorte (para la etiqueta superior)
+df_inicial_totales <- df_inicial_conteo %>%
+  group_by(cohorte) %>%
+  summarise(total_cohorte = sum(num_usuarios), .groups = "drop")
+
+# 4) Gráfico de barras apiladas
+ggplot(df_inicial_conteo,
+       aes(x = factor(cohorte), 
+           y = num_usuarios, 
+           fill = grupo_validacion)) +
+  # a) Barras apiladas
+  geom_bar(stat = "identity", position = "stack") +
+  
+  # b) Etiquetas internas para cada porción (num_usuarios)
+  geom_text(
+    aes(label = num_usuarios),
+    position = position_stack(vjust = 0.5),  # coloca la etiqueta en la mitad de la porción
+    color = "white",
+    size = 3
+  ) +
+  
+  # c) Etiqueta del total en la parte superior
+  geom_text(
+    data = df_inicial_totales,
+    aes(x = factor(cohorte), y = total_cohorte, label = total_cohorte),
+    inherit.aes = FALSE,  # ignora fill, etc.
+    vjust = -0.5,
+    size = 4
+  ) +
+  
+  labs(
+    x    = "Año de Cohorte (Primera Aparición)",
+    y    = "Número de Usuarios",
+    fill = "Tipo de Validación"
+  ) +
+  theme_minimal()
+```
+```{r}
+df_no_validados_inicial <- df_cohortes %>%
+  filter(PERIODO_EVALUACION == cohorte) %>%                  # cohorte = año de 1ª aparición
+  filter(grupo_validacion != "Validados fonasa" | is.na(grupo_validacion)) %>%
+  distinct(ID_USUARIO, cohorte)
+
+df_validacion_tardia <- df_cohortes %>%
+  inner_join(df_no_validados_inicial, by = c("ID_USUARIO", "cohorte")) %>%
+  filter(grupo_validacion == "Validados fonasa") %>%
+  filter(PERIODO_EVALUACION > cohorte) %>%
+  group_by(ID_USUARIO) %>%
+  summarise(
+    cohorte          = first(cohorte),
+    primer_validados = min(PERIODO_EVALUACION),
+    .groups          = "drop"
+  )
+
+df_validacion_tardia_conteo <- df_validacion_tardia %>%
+  group_by(cohorte, primer_validados) %>%
+  summarise(num_usuarios = n_distinct(ID_USUARIO), .groups = "drop") %>%
+  mutate(primer_validados = as.character(primer_validados))  
+
+df_nunca_validados <- df_no_validados_inicial %>%
+  anti_join(df_validacion_tardia, by = "ID_USUARIO") %>%
+  group_by(cohorte) %>%
+  summarise(num_usuarios = n_distinct(ID_USUARIO), .groups = "drop") %>%
+  mutate(primer_validados = "Nunca validado")
+
+# Combinamos ambos data frames
+df_combinado <- bind_rows(df_validacion_tardia_conteo, df_nunca_validados)
+
+
+# 1. Calcular total de usuarios por cohorte (la misma que usas en el eje X)
+df_totales <- df_combinado %>%
+  group_by(cohorte) %>%
+  summarise(total = sum(num_usuarios), .groups = "drop")
+
+# 2. Gráfico de barras apiladas con leyenda = año en que se validan + "Nunca validado"
+ggplot(
+  df_combinado, 
+  aes(x = factor(cohorte),
+      y = num_usuarios,
+      fill = factor(primer_validados))
+) +
+  geom_bar(stat = "identity", position = "stack") +
+  
+  # Etiquetas internas para cada porción apilada
+  geom_text(
+    aes(label = num_usuarios),
+    position = position_stack(vjust = 0.5),
+    size = 3,
+    color = "white"
+  ) +
+  
+  # 3. Agregar el texto del total encima de cada barra
+  geom_text(
+    data = df_totales,
+    aes(x = factor(cohorte), y = total, label = total),
+    inherit.aes = FALSE,  # Para que no use fill ni otras estéticas
+    vjust = -0.5,
+    size = 4
+  ) +
+  
+  labs(
+    x    = "Cohorte (año de primera aparición)",
+    y    = "Número de usuarios",
+    fill = "Año en que se validan Fonasa"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# 1) Filtramos filas con años 2017 a 2024
+df_filtrada_validados <- usuarios %>%
+  filter(PERIODO_EVALUACION >= 2015 & PERIODO_EVALUACION <= 2024) %>%
+  mutate(
+    grupo_validacion = if_else(
+      TIPO_INSCRIPCION == "Validado Fonasa",
+      "Validados fonasa",
+      "Otros/NA"
+    )
+  ) %>% filter(grupo_validacion == "Validados fonasa")
+
+resumen <- df_filtrada_validados %>%
+  group_by(PERIODO_EVALUACION, COMUNA) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(PERIODO_EVALUACION) %>%
+  mutate(porcentaje = (n / sum(n)) * 100)
+
+# Crear el resumen con conteo de ID_USUARIOS únicos y porcentaje por PERIODO_EVALUACION y COMUNA
+resumen2 <- df_filtrada_validados %>%
+  group_by(PERIODO_EVALUACION, COMUNA) %>%
+  summarise(
+    n = n_distinct(ID_USUARIO), # Contar ID_USUARIOS únicos
+    .groups = "drop" # Eliminar agrupamientos posteriores
+  ) %>%
+  group_by(PERIODO_EVALUACION) %>%
+  mutate(
+    porcentaje = (n / sum(n)) * 100 # Calcular el porcentaje por período
+  ) %>% mutate(PERIODO_EVALUACION = as.factor(PERIODO_EVALUACION))
+              
+
+datatable(
+  resumen2,
+  filter = 'top', 
+  options = list(
+    pageLength = 20,
+    scrollX = TRUE,
+    scrollY = "800px",
+    autoWidth = TRUE)# Agrupa usando las dos primeras columnas
+  )
+```
+# Cobertura CERO 2017-2024
+
+```{r}
+#ATENCIONES ODONTOLOGICAS Y PAUTA CERO
+
+atencion_cero <- atencion_odonto %>%
+  filter(YEAR >= 2017) %>%  
+  full_join(pauta_cero, by = c("ID_USUARIO", "ID_ATENCION", "YEAR", "NOMBRE_COMUNA")) %>%
+  mutate(
+    MERGE = case_when(
+      # Todas presentes
+      !is.na(ESTADO_ATENCION) & !is.na(FNP_ID)  ~ "Atenciones y Pauta CERO",
+      
+      # AStenciones
+      !is.na(ESTADO_ATENCION) & is.na(FNP_ID) ~ "Atenciones",
+      
+      # Pauta CERO
+      is.na(ESTADO_ATENCION) & !is.na(FNP_ID) ~ "Pauta CERO",
+      
+      # Ninguna presente
+      TRUE ~ "No unida"
+    )
+  ) %>%
+  filter(
+    str_detect(NOMBRE_PRESTACION, regex("cero", ignore_case = TRUE)) |
+    MERGE == "Pauta CERO" |
+    MERGE == "No unida"
+  ) %>%
+  mutate(across(starts_with("FECHA"), ~ as.Date(.)))
+
+
+
+atencion_cero_id_unico <- atencion_cero %>% select(ID_USUARIO,YEAR,MERGE,NOMBRE_COMUNA) %>% # Seleccionar las columnas relevantes
+  distinct(ID_USUARIO, YEAR, .keep_all = TRUE) %>% rename(PERIODO_EVALUACION = YEAR)
+
+
+usuarios_pauta_cero <- usuarios %>% 
+  group_by(PERIODO_EVALUACION) %>% 
+  distinct() %>% 
+  ungroup %>% 
+  filter(PERIODO_EVALUACION >= 2017) %>% 
+  full_join(atencion_cero_id_unico, by=c("ID_USUARIO", "PERIODO_EVALUACION")) %>%
+  mutate(
+    CERO = case_when(
+      # Todas presentes
+      !is.na(SEXO_COD) & !is.na(MERGE)  ~ "Si",
+      
+      # AStenciones
+      !is.na(SEXO_COD) & is.na(MERGE)  ~ "No",
+      
+      # Pauta CERO
+      is.na(SEXO_COD) & !is.na(MERGE)  ~ "Si",
+      
+      # Ninguna presente
+      TRUE ~ "No unida"
+    ))
+
+cobertura_cero <- usuarios_pauta_cero %>% filter(TIPO_INSCRIPCION == "Validado Fonasa" | !is.na(MERGE)) %>%
+  mutate(
+    COMUNA = if_else(is.na(COMUNA), NOMBRE_COMUNA, COMUNA)
+  )
+
+# Calcular la cobertura de CERO == "Si" por PERIODO_EVALUACION
+cobertura_cero1 <- cobertura_cero  %>% # Filtrar solo las filas donde TIPO_INSCRIPCION es "Validado Fonasa"
+  group_by(PERIODO_EVALUACION) %>% # Agrupar por PERIODO_EVALUACION
+  summarise(
+    total_validado = sum(TIPO_INSCRIPCION == "Validado Fonasa", na.rm = TRUE), # Total de registros con TIPO_INSCRIPCION == "Validado Fonasa"
+    cero_si = sum(CERO == "Si", na.rm = TRUE), # Total de registros con CERO == "Si"
+    cobertura = (cero_si / total_validado) * 100 # Calcular el porcentaje de cobertura
+  ) %>% mutate(PERIODO_EVALUACION = as.factor(PERIODO_EVALUACION))
+
+cobertura_cero1_por_comuna <- cobertura_cero %>%
+  group_by(PERIODO_EVALUACION, COMUNA) %>% # Agrupar por PERIODO_EVALUACION y COMUNA
+  summarise(
+    total_validado = sum(TIPO_INSCRIPCION == "Validado Fonasa", na.rm = TRUE), # Total de registros con TIPO_INSCRIPCION == "Validado Fonasa"
+    cero_si = sum(CERO == "Si", na.rm = TRUE), # Total de registros con CERO == "Si"
+    cobertura = (cero_si / total_validado) * 100, # Calcular el porcentaje de cobertura
+    .groups = "drop" # Evitar agrupación persistente
+  ) %>% mutate(PERIODO_EVALUACION = as.factor(PERIODO_EVALUACION),
+               COMUNA = as.factor(COMUNA))
+
+# Calcular la cobertura de CERO == "Si" por PERIODO_EVALUACION
+cobertura_cero2 <- cobertura_cero %>%
+  filter(TIPO_INSCRIPCION == "Validado Fonasa") %>% # Filtrar solo las filas donde TIPO_INSCRIPCION es "Validado Fonasa"
+  group_by(PERIODO_EVALUACION) %>% # Agrupar por PERIODO_EVALUACION
+  summarise(
+    total_validado = n(), # Total de registros con TIPO_INSCRIPCION == "Validado Fonasa"
+    cero_si = sum(CERO == "Si", na.rm = TRUE), # Total de registros con CERO == "Si"
+    cobertura = (cero_si / total_validado) * 100 # Calcular el porcentaje de cobertura
+  ) %>% mutate(PERIODO_EVALUACION = as.factor(PERIODO_EVALUACION))
+
+cobertura_cero2_por_comuna <- cobertura_cero %>%
+  filter(TIPO_INSCRIPCION == "Validado Fonasa") %>% # Filtrar donde TIPO_INSCRIPCION es "Validado Fonasa"
+  group_by(PERIODO_EVALUACION, COMUNA) %>% # Agrupar por PERIODO_EVALUACION y COMUNA
+  summarise(
+    total_validado = n(), # Total de registros con TIPO_INSCRIPCION == "Validado Fonasa"
+    cero_si = sum(CERO == "Si", na.rm = TRUE), # Total de registros con CERO == "Si"
+    cobertura = (cero_si / total_validado) * 100, # Calcular el porcentaje de cobertura
+    .groups = "drop" # Evitar agrupación persistente
+  ) %>% mutate(PERIODO_EVALUACION = as.factor(PERIODO_EVALUACION),
+               COMUNA = as.factor(COMUNA))
+
+datatable(
+  cobertura_cero1,
+  filter = 'top', 
+  options = list(
+    pageLength = 20,
+    scrollX = TRUE,
+    scrollY = "800px",
+    autoWidth = TRUE)# Agrupa usando las dos primeras columnas
+  )
+
+datatable(
+  cobertura_cero1_por_comuna,
+  filter = 'top', 
+  options = list(
+    pageLength = 20,
+    scrollX = TRUE,
+    scrollY = "800px",
+    autoWidth = TRUE)# Agrupa usando las dos primeras columnas
+  )
+
+datatable(
+  cobertura_cero2,
+  filter = 'top', 
+  options = list(
+    pageLength = 20,
+    scrollX = TRUE,
+    scrollY = "800px",
+    autoWidth = TRUE)# Agrupa usando las dos primeras columnas
+  )
+
+datatable(
+  cobertura_cero2_por_comuna,
+  filter = 'top', 
+  options = list(
+    pageLength = 20,
+    scrollX = TRUE,
+    scrollY = "800px",
+    autoWidth = TRUE)# Agrupa usando las dos primeras columnas
+  )
+```
+
+# Códigos no incluidos
+
+```{r}
+#| eval: false
+#| include: false
+
+
+
+# 1) Sumar el total de usuarios por año
+df_totales <- df_conteo %>%
+  group_by(PERIODO_EVALUACION) %>%
+  summarise(total_barra = sum(num_usuarios), .groups = "drop")
+
+
+
+# 2) Gráfico de líneas (una línea por cohorte)
+ggplot(df_conteo, 
+       aes(x = PERIODO_EVALUACION, 
+           y = num_usuarios, 
+           color = factor(cohorte))) +
+  geom_line() + 
+  geom_point() +
+
+  geom_text(aes(label = num_usuarios),
+            vjust = 0.5,
+            hjust = -0.1,# ajusta verticalmente la etiqueta
+            size  = 3,
+            angle = 45) +
+  geom_text(data = df_totales,
+              aes(x = PERIODO_EVALUACION, 
+                  y = 80000,,
+                  label = total_barra),
+              inherit.aes = FALSE,  # no usa color=cohorte
+              vjust = 0,         # para que quede un poco más arriba
+              size  = 3) +
+  
+  labs(x = "Año de evaluación",
+       y = "Número de usuarios",
+       color = "Cohorte (año de primera aparición)") +
+    scale_color_discrete(
+    name   = "Cohorte (año de primera aparición)",
+    breaks = c("2015","2016","2017","2018","2019","2020","2021","2022","2023","2024"),
+    labels = c("2015","2016","2017","2018","2019","2020","2021","2022","2023","2024")
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+#| eval: false
+#| include: false
+
+## Merge 1: Pauta cero + usuarios → merge 1 (Merge por ID_USUARIO único por el total de datos de usuario)
+merge1 <- usuarios %>% select(-PERIODO_EVALUACION, -EDAD) %>% distinct() %>% 
+  full_join(pauta_cero, by = "ID_USUARIO") %>%
+  mutate(
+    MERGE = case_when(
+      !is.na(SEXO_COD) & !is.na(ID_ATENCION) ~ "Ambas bases",
+      is.na(SEXO_COD) & !is.na(ID_ATENCION) ~ "Solo pauta_cero",
+      !is.na(SEXO_COD) & is.na(ID_ATENCION) ~ "Solo usuarios",
+      TRUE ~ "No unida"
+    )
+  )  %>%
+  mutate(
+    FECHA_NACIMIENTO = as.Date(FECHA_NACIMIENTO),  # Garantiza formato Date
+    FECHA_APLICACION_PAUTA_CERO = as.POSIXct(FECHA_APLICACION_PAUTA_CERO)  # Garantiza formato POSIXct
+  ) %>%
+  mutate(
+    EDAD_APLICACION_PAUTA_CERO = floor(time_length(difftime(FECHA_APLICACION_PAUTA_CERO, FECHA_NACIMIENTO), "years"))
+  )
+
+# Resumen del factor como tabla
+tabla_resumen <- summary(as.factor(merge1$MERGE)) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Categoría") %>%
+  rename(Frecuencia = ".") %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  )
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 1", 
+    col.names = c("Categoría", "Frecuencia", "Porcentaje (%)"),
+    align = "c"
+  ) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px")
+```
+
+
+```{r}
+#| eval: false
+#| include: false
+
+## Merge 1: Pauta cero + usuarios → merge 1 (Merge por ID_USUARIO único por el total de datos de usuario y filtro de edad <= 6 años)
+merge1 <- merge1 %>% filter(EDAD_APLICACION_PAUTA_CERO <= 6)
+
+# Resumen del factor como tabla
+tabla_resumen <- summary(as.factor(merge1$MERGE)) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Categoría") %>%
+  rename(Frecuencia = ".") %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  )
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 1", 
+    col.names = c("Categoría", "Frecuencia", "Porcentaje (%)"),
+    align = "c"
+  ) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px")
+
+vis_miss(merge1 [sample(nrow(merge1), 10000), 24:101], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+ggsave("pautacero_0_6_miss_plot.png", width = 16, height = 9, dpi = 1000)
+
+t1kable(table1(~ ., data = select(merge1, -1:-23, -FH_Cero_FhaProxControl_0_5, -FH_Cero_FhaProxControl_6_9,-FH_Cero_FhaProxControl_10_19), overall = "Total")) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px")
+
+################################################################################
+
+# Calcular métricas agrupadas por edad
+resumen_por_edad <- merge1 %>%
+  group_by(EDAD_APLICACION_PAUTA_CERO) %>%
+  summarise(
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO), # Contar IDs únicos por edad
+    total_PAUTAS_CERO_aplicadas = n(), # Contar pautas aplicadas por edad
+    min_PAUTAS_CERO = min(table(ID_USUARIO)), # Mínimo de pautas por usuario
+    max_PAUTAS_CERO = max(table(ID_USUARIO)), # Máximo de pautas por usuario
+    promedio_PAUTAS_CERO = mean(table(ID_USUARIO)) # Promedio de pautas por usuario
+  ) %>%
+  ungroup() %>%
+  mutate(EDAD_APLICACION_PAUTA_CERO = as.character(EDAD_APLICACION_PAUTA_CERO)) # Asegurar que es character
+
+# Calcular totales y métricas generales
+totales <- merge1 %>%
+  summarise(
+    EDAD_APLICACION_PAUTA_CERO = "Total",
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO), # Total de IDs únicos
+    total_PAUTAS_CERO_aplicadas = n(), # Total de pautas aplicadas
+    min_PAUTAS_CERO = min(table(ID_USUARIO)), # Mínimo de pautas por usuario en el total
+    max_PAUTAS_CERO = max(table(ID_USUARIO)), # Máximo de pautas por usuario en el total
+    promedio_PAUTAS_CERO = mean(table(ID_USUARIO)) # Promedio de pautas por usuario en el total
+  )
+
+resumen_merge1 <- bind_rows(resumen_por_edad, totales)
+
+resumen_merge1 %>%
+  kable(
+    format = "html", # También puedes usar "html" o "latex"
+    col.names = c("Edad de Aplicación", "Usuarios Únicos", "Pautas Aplicadas", "Mínimo Pautas", "Máximo Pautas", "Promedio Pautas"),
+    caption = "Resumen de Usuarios y Pautas Cero por Edad (Sin eliminar duplicados)"
+  ) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px")
+```
+
+```{r}
+#| eval: false
+#| include: false
+
+## Merge 1.1: Merge 1 + eliminación de datos duplicados en el mismo de día de aplicación de pauta cero.
+merge1.1 <- merge1 %>%
+  mutate(FECHA_APLICACION_PAUTA_CERO = as.Date(FECHA_APLICACION_PAUTA_CERO)) %>% # Convertir a fecha
+  distinct(across(c(1, 18, 19, 24:101)), .keep_all = TRUE) #Duplicados por ID_USUARIO FECHA_APLICACION_PAUTA_CERO TODAS LAS PREGUTNAS DE PAUTA CERO
+
+# Resumen del factor como tabla
+tabla_resumen <- summary(as.factor(merge1.1$MERGE)) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Categoría") %>%
+  rename(Frecuencia = ".") %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  )
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 1", 
+    col.names = c("Categoría", "Frecuencia", "Porcentaje (%)"),
+    align = "c"
+  ) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px")
+
+vis_miss(merge1.1 [sample(nrow(merge1), 10000), 24:101], sort_miss = TRUE) +
+  theme(axis.text.x = element_text(angle = 90))
+ggsave("pautacero_0_6_miss_plot.png", width = 16, height = 9, dpi = 1000)
+
+t1kable(table1(~ ., data = select(merge1.1, -1:-23, -FH_Cero_FhaProxControl_0_5, -FH_Cero_FhaProxControl_6_9,-FH_Cero_FhaProxControl_10_19), overall = "Total")) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px")
+
+################################################################################
+
+# Calcular métricas agrupadas por edad
+resumen_por_edad <- merge1.1 %>%
+  group_by(EDAD_APLICACION_PAUTA_CERO) %>%
+  summarise(
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO), # Contar IDs únicos por edad
+    total_PAUTAS_CERO_aplicadas = n(), # Contar pautas aplicadas por edad
+    min_PAUTAS_CERO = min(table(ID_USUARIO)), # Mínimo de pautas por usuario
+    max_PAUTAS_CERO = max(table(ID_USUARIO)), # Máximo de pautas por usuario
+    promedio_PAUTAS_CERO = mean(table(ID_USUARIO)) # Promedio de pautas por usuario
+  ) %>%
+  ungroup() %>%
+  mutate(EDAD_APLICACION_PAUTA_CERO = as.character(EDAD_APLICACION_PAUTA_CERO)) # Asegurar que es character
+
+# Calcular totales y métricas generales
+totales <- merge1.1 %>%
+  summarise(
+    EDAD_APLICACION_PAUTA_CERO = "Total",
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO), # Total de IDs únicos
+    total_PAUTAS_CERO_aplicadas = n(), # Total de pautas aplicadas
+    min_PAUTAS_CERO = min(table(ID_USUARIO)), # Mínimo de pautas por usuario en el total
+    max_PAUTAS_CERO = max(table(ID_USUARIO)), # Máximo de pautas por usuario en el total
+    promedio_PAUTAS_CERO = mean(table(ID_USUARIO)) # Promedio de pautas por usuario en el total
+  )
+
+# Agregar la fila de totales a la tabla original
+resumen_merge1.1 <- bind_rows(resumen_por_edad, totales)
+
+resumen_merge1.1 %>%
+  kable(
+    format = "html", # También puedes usar "html" o "latex"
+    col.names = c("Edad de Aplicación", "Usuarios Únicos", "Pautas Aplicadas", "Mínimo Pautas", "Máximo Pautas", "Promedio Pautas"),
+    caption = "Resumen de Usuarios y Pautas Cero por Edad (Eliminando duplicados por Usuario y Fecha de Aplicación de pauta 0)"
+  ) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px")
+```
+
+```{r}
+#| eval: false
+#| include: false
+## Merge 2: Pauta cero + usuarios → merge 2 (Merge por ID_USUARIO único y AÑO (PERIODO_ECALUACION→ususrios FECHA_APLICACION_PAUTA_CERO→pauta_cero ) por el total de datos de usuario)
+merge2 <- usuarios %>% distinct() %>% rename(YEAR = PERIODO_EVALUACION) %>%  
+  full_join(pauta_cero %>%
+  mutate(
+    YEAR = as.numeric(format(FECHA_APLICACION_PAUTA_CERO, "%Y")) # Extrae el año
+    ), by = c("ID_USUARIO", "YEAR")) %>%
+  mutate(
+    MERGE = case_when(
+      !is.na(SEXO_COD) & !is.na(ID_ATENCION) ~ "Ambas bases",
+      is.na(SEXO_COD) & !is.na(ID_ATENCION) ~ "Solo pauta_cero",
+      !is.na(SEXO_COD) & is.na(ID_ATENCION) ~ "Solo usuarios",
+      TRUE ~ "No unida"
+    )
+  )  %>%
+  mutate(
+    FECHA_NACIMIENTO = as.Date(FECHA_NACIMIENTO),  # Garantiza formato Date
+    FECHA_APLICACION_PAUTA_CERO = as.POSIXct(FECHA_APLICACION_PAUTA_CERO)  # Garantiza formato POSIXct
+  ) %>%
+  mutate(
+    EDAD_APLICACION_PAUTA_CERO = floor(time_length(difftime(FECHA_APLICACION_PAUTA_CERO, FECHA_NACIMIENTO), "years"))
+  )
+# 
+# # Crear un data frame con combinaciones de años y conteo de duplicados
+# duplicados_por_año <- merge2 %>%
+#   select(ID_USUARIO, YEAR) %>%
+#   distinct() %>% # Asegurarse de que no hay registros duplicados en el mismo año
+#   group_by(ID_USUARIO) %>%
+#   summarise(YEARS = list(YEAR)) %>% # Agrupar años por usuario
+#   unnest(cols = YEARS) %>% # Desanidar la lista de años
+#   group_by(ID_USUARIO) %>%
+#   summarise(Combinaciones = combn(YEARS, 2, simplify = FALSE)) %>% # Generar combinaciones de años por usuario
+#   unnest(cols = Combinaciones) %>%
+#   mutate(Year1 = map_chr(Combinaciones, ~ .x[1]),
+#          Year2 = map_chr(Combinaciones, ~ .x[2])) %>% # Separar las combinaciones en dos columnas
+#   group_by(Year1, Year2) %>%
+#   summarise(Duplicados = n(), .groups = "drop") # Contar duplicados por combinación de años
+# 
+# # Convertir la tabla a formato ancho (matriz de duplicados)
+# matriz_duplicados <- duplicados_por_año %>%
+#   pivot_wider(names_from = Year2, values_from = Duplicados, values_fill = 0)
+
+
+
+# Resumen del factor como tabla
+tabla_resumen <- summary(as.factor(merge2$MERGE)) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Categoría") %>%
+  rename(Frecuencia = ".") %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  )
+
+# Calcular los totales por año
+tabla_con_totales <- merge2 %>%
+  filter(MERGE != "Solo pauta_cero" & EDAD <= 6) %>% 
+  group_by(YEAR) %>%
+  summarise(
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO, na.rm = TRUE), # Contar IDs únicos, ignorando NA
+    total_PAUTAS_CERO_aplicadas = sum(!is.na(ID_ATENCION)) # Contar pautas aplicadas, ignorando NA
+  ) %>%
+  ungroup() %>%
+  # Convertir YEAR a character para evitar errores en bind_rows
+  mutate(YEAR = as.character(YEAR)) %>%
+  # Calcular la fila de totales y agregarla a la tabla
+  bind_rows(
+    summarise(
+      .,
+      YEAR = "Total", # Etiqueta para la fila de totales
+      total_ID_USUARIOS_unicos = sum(total_ID_USUARIOS_unicos, na.rm = TRUE),
+      total_PAUTAS_CERO_aplicadas = sum(total_PAUTAS_CERO_aplicadas, na.rm = TRUE)
+    )
+  )
+
+# Crear un kable con la fila de totales
+tabla_con_totales %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 2 con Totales", 
+    col.names = c("Año (Periodo de evaluación en base usuarios)", "Usuarios Únicos < 6 años", "Pautas Aplicadas"),
+    align = "c"
+  ) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  scroll_box(height = "400px")
+```
+
+```{r}
+#| eval: false
+#| include: false
+## Merge 2: Pauta cero + usuarios → merge 2 (Merge por ID_USUARIO único y AÑO (PERIODO_ECALUACION→ususrios FECHA_APLICACION_PAUTA_CERO→pauta_cero ) por el total de datos de usuario y filtro de edad <= 6 años aplicación pauta cero)
+merge2 <- merge2 %>% filter(EDAD_APLICACION_PAUTA_CERO <= 6 )
+
+# Resumen del factor como tabla
+tabla_resumen <- summary(as.factor(merge2$MERGE)) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Categoría") %>%
+  rename(Frecuencia = ".") %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  )
+
+# Crear la tabla kable
+tabla_resumen %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 2", 
+    col.names = c("Categoría", "Frecuencia", "Porcentaje (%)"),
+    align = "c"
+  ) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px")
+
+# Calcular métricas agrupadas por edad
+resumen_por_edad <- merge2 %>%
+  group_by(YEAR,EDAD_APLICACION_PAUTA_CERO) %>%
+  summarise(
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO), # Contar IDs únicos por edad
+    total_PAUTAS_CERO_aplicadas = n(), # Contar pautas aplicadas por edad
+    min_PAUTAS_CERO = min(table(ID_USUARIO)), # Mínimo de pautas por usuario
+    max_PAUTAS_CERO = max(table(ID_USUARIO)), # Máximo de pautas por usuario
+    promedio_PAUTAS_CERO = mean(table(ID_USUARIO)) # Promedio de pautas por usuario
+  ) %>%
+  ungroup() %>%
+  mutate(EDAD_APLICACION_PAUTA_CERO = as.character(EDAD_APLICACION_PAUTA_CERO),
+         YEAR = as.character(YEAR)) # Asegurar que es character
+
+# Calcular totales y métricas generales
+totales <- merge2 %>% 
+  summarise(
+    YEAR = "Total",
+    EDAD_APLICACION_PAUTA_CERO = "Total",
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO), # Total de IDs únicos
+    total_PAUTAS_CERO_aplicadas = n(), # Total de pautas aplicadas
+    min_PAUTAS_CERO = min(table(ID_USUARIO)), # Mínimo de pautas por usuario en el total
+    max_PAUTAS_CERO = max(table(ID_USUARIO)), # Máximo de pautas por usuario en el total
+    promedio_PAUTAS_CERO = mean(table(ID_USUARIO)) # Promedio de pautas por usuario en el total
+  )
+
+resumen_merge2 <- bind_rows(resumen_por_edad, totales)
+
+resumen_merge2 %>%
+  kable(
+    format = "html", # También puedes usar "html" o "latex"
+    col.names = c("Año de ingreso a ususrio","Edad de Aplicación", "Usuarios Únicos", "Pautas Aplicadas", "Mínimo Pautas", "Máximo Pautas", "Promedio Pautas"),
+    caption = "Resumen de Usuarios y Pautas Cero por Edad (Sin eliminar duplicados)"
+  ) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px") %>% # Estilizar la tabla
+  collapse_rows(columns = 1, valign = "middle")
+
+
+```
+
+```{r}
+#| eval: false
+#| include: false
+## Merge 2.1: Merge 2 + eliminación de datos duplicados en el mismo de día de aplicación de pauta cero.
+merge2.1 <- merge2 %>%
+  mutate(FECHA_APLICACION_PAUTA_CERO = as.Date(FECHA_APLICACION_PAUTA_CERO)) %>% # Convertir a fecha
+  distinct(across(c(1, 18, 19, 24:101)), .keep_all = TRUE) #Duplicados por ID_USUARIO FECHA_APLICACION_PAUTA_CERO TODAS LAS PREGUTNAS DE PAUTA CERO
+
+# Calcular los totales por año
+tabla_con_totales <- merge2.1 %>%
+  filter(MERGE != "Solo pauta_cero") %>% 
+  group_by(YEAR) %>%
+  summarise(
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO, na.rm = TRUE), # Contar IDs únicos, ignorando NA
+    total_PAUTAS_CERO_aplicadas = sum(!is.na(ID_ATENCION)) # Contar pautas aplicadas, ignorando NA
+  ) %>%
+  ungroup() %>%
+  # Convertir YEAR a character para evitar errores en bind_rows
+  mutate(YEAR = as.character(YEAR)) %>%
+  # Calcular la fila de totales y agregarla a la tabla
+  bind_rows(
+    summarise(
+      .,
+      YEAR = "Total", # Etiqueta para la fila de totales
+      total_ID_USUARIOS_unicos = sum(total_ID_USUARIOS_unicos, na.rm = TRUE),
+      total_PAUTAS_CERO_aplicadas = sum(total_PAUTAS_CERO_aplicadas, na.rm = TRUE)
+    )
+  )
+
+# Crear un kable con la fila de totales
+tabla_con_totales %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 2 con Totales", 
+    col.names = c("Año (Periodo de evalcuion en base usuarios)", "Usuarios Únicos", "Pautas Aplicadas"),
+    align = "c"
+  ) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  scroll_box(height = "400px")
+
+
+# Calcular métricas agrupadas por edad
+resumen_por_edad <- merge2.1 %>%
+  group_by(YEAR,EDAD_APLICACION_PAUTA_CERO) %>%
+  summarise(
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO), # Contar IDs únicos por edad
+    total_PAUTAS_CERO_aplicadas = n(), # Contar pautas aplicadas por edad
+    min_PAUTAS_CERO = min(table(ID_USUARIO)), # Mínimo de pautas por usuario
+    max_PAUTAS_CERO = max(table(ID_USUARIO)), # Máximo de pautas por usuario
+    promedio_PAUTAS_CERO = mean(table(ID_USUARIO)) # Promedio de pautas por usuario
+  ) %>%
+  ungroup() %>%
+  mutate(EDAD_APLICACION_PAUTA_CERO = as.character(EDAD_APLICACION_PAUTA_CERO),
+         YEAR = as.character(YEAR)) # Asegurar que es character
+
+# Calcular totales y métricas generales
+totales <- merge2.1 %>% 
+  summarise(
+    YEAR = "Total",
+    EDAD_APLICACION_PAUTA_CERO = "Total",
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO), # Total de IDs únicos
+    total_PAUTAS_CERO_aplicadas = n(), # Total de pautas aplicadas
+    min_PAUTAS_CERO = min(table(ID_USUARIO)), # Mínimo de pautas por usuario en el total
+    max_PAUTAS_CERO = max(table(ID_USUARIO)), # Máximo de pautas por usuario en el total
+    promedio_PAUTAS_CERO = mean(table(ID_USUARIO)) # Promedio de pautas por usuario en el total
+  )
+
+resumen_merge2 <- bind_rows(resumen_por_edad, totales)
+
+resumen_merge2 %>%
+  kable(
+    format = "html", # También puedes usar "html" o "latex"
+    col.names = c("Año de ingreso a ususrio","Edad de Aplicación", "Usuarios Únicos", "Pautas Aplicadas", "Mínimo Pautas", "Máximo Pautas", "Promedio Pautas"),
+    caption = "Resumen de Usuarios y Pautas Cero por Edad (Sin eliminar duplicados)"
+  ) %>% kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% scroll_box(height = "400px") %>% # Estilizar la tabla
+  collapse_rows(columns = 1, valign = "middle")
+```
+
+
+```{r}
+#| eval: false
+#| include: false
+# Merge 3
+usuarios3 <- usuarios %>% 
+  filter(EDAD <= 6) %>% 
+  select(ID_USUARIO, PERIODO_EVALUACION)
+
+merge3 <- usuarios %>% distinct() %>%  
+  full_join(pauta_cero %>%
+  mutate(
+    YEAR = as.numeric(format(FECHA_APLICACION_PAUTA_CERO, "%Y")) # Extrae el año
+    ), by = c("ID_USUARIO")) %>%
+  mutate(
+    MERGE = case_when(
+      !is.na(SEXO_COD) & !is.na(ID_ATENCION) ~ "Ambas bases",
+      is.na(SEXO_COD) & !is.na(ID_ATENCION) ~ "Solo pauta_cero",
+      !is.na(SEXO_COD) & is.na(ID_ATENCION) ~ "Solo usuarios",
+      TRUE ~ "No unida"
+    )
+  )  %>%
+  mutate(
+    FECHA_NACIMIENTO = as.Date(FECHA_NACIMIENTO),  # Garantiza formato Date
+    FECHA_APLICACION_PAUTA_CERO = as.POSIXct(FECHA_APLICACION_PAUTA_CERO)  # Garantiza formato POSIXct
+  ) %>%
+  mutate(
+    EDAD_APLICACION_PAUTA_CERO = floor(time_length(difftime(FECHA_APLICACION_PAUTA_CERO, FECHA_NACIMIENTO), "years"))
+  )
+# 
+# # Crear un data frame con combinaciones de años y conteo de duplicados
+# duplicados_por_año <- merge2 %>%
+#   select(ID_USUARIO, YEAR) %>%
+#   distinct() %>% # Asegurarse de que no hay registros duplicados en el mismo año
+#   group_by(ID_USUARIO) %>%
+#   summarise(YEARS = list(YEAR)) %>% # Agrupar años por usuario
+#   unnest(cols = YEARS) %>% # Desanidar la lista de años
+#   group_by(ID_USUARIO) %>%
+#   summarise(Combinaciones = combn(YEARS, 2, simplify = FALSE)) %>% # Generar combinaciones de años por usuario
+#   unnest(cols = Combinaciones) %>%
+#   mutate(Year1 = map_chr(Combinaciones, ~ .x[1]),
+#          Year2 = map_chr(Combinaciones, ~ .x[2])) %>% # Separar las combinaciones en dos columnas
+#   group_by(Year1, Year2) %>%
+#   summarise(Duplicados = n(), .groups = "drop") # Contar duplicados por combinación de años
+# 
+# # Convertir la tabla a formato ancho (matriz de duplicados)
+# matriz_duplicados <- duplicados_por_año %>%
+#   pivot_wider(names_from = Year2, values_from = Duplicados, values_fill = 0)
+
+
+
+# Resumen del factor como tabla
+tabla_resumen <- summary(as.factor(merge3$MERGE)) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Categoría") %>%
+  rename(Frecuencia = ".") %>%
+  mutate(
+    Porcentaje = round((Frecuencia / sum(Frecuencia)) * 100, 2)
+  )
+
+# Calcular los totales por año
+tabla_con_totales <- merge3 %>%
+  filter(MERGE != "Solo pauta_cero" & EDAD <= 6) %>% 
+  group_by(PERIODO_EVALUACION, YEAR) %>%
+  summarise(
+    total_ID_USUARIOS_unicos = n_distinct(ID_USUARIO, na.rm = TRUE), # Contar IDs únicos, ignorando NA
+    total_PAUTAS_CERO_aplicadas = sum(!is.na(ID_ATENCION)) # Contar pautas aplicadas, ignorando NA
+  ) %>%
+  ungroup() %>%
+  # Convertir YEAR a character para evitar errores en bind_rows
+  mutate(PERIODO_EVALUACION = as.character(PERIODO_EVALUACION),
+         YEAR = as.character(YEAR))
+
+
+
+# Crear un kable con la fila de totales
+tabla_con_totales %>%
+  kbl(
+    format = "html",
+    caption = "Resumen de Merge 2 con Totales", 
+    col.names = c("Año (Periodo de evaluación en base usuarios)", "Año Pauta 0","Usuarios Únicos < 6 años", "Pautas  cero"),
+    align = "c"
+  ) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  scroll_box(height = "400px")
+
+```
+
+```{r}
+#| eval: false
+#| include: false
+# Crear una lista de bases por año
+lista_por_anio <- usuarios %>%
+  group_by(PERIODO_EVALUACION) %>%
+  summarise(ID_USUARIO = list(ID_USUARIO)) %>%
+  deframe()
+
+# Crear una matriz para almacenar los resultados
+anios <- names(lista_por_anio)
+matriz_duplicados <- matrix(0, nrow = length(anios), ncol = length(anios),
+                            dimnames = list(anios, anios))
+
+# Calcular duplicados entre los años
+for (i in seq_along(anios)) {
+  for (j in seq_along(anios)) {
+    if (i <= j) {
+      # Concatenar los IDs de los dos años y buscar duplicados
+      ids_concatenados <- c(lista_por_anio[[i]], lista_por_anio[[j]])
+      matriz_duplicados[i, j] <- sum(duplicated(ids_concatenados))
+      matriz_duplicados[j, i] <- matriz_duplicados[i, j]  # Matriz simétrica
+    }
+  }
+}
+
+# Agregar totales directamente a la matriz de duplicados
+# matriz_duplicados <- cbind(matriz_duplicados, Total_Fila = rowSums(matriz_duplicados))
+# matriz_duplicados <- rbind(matriz_duplicados, Total_Columna = colSums(matriz_duplicados))
+
+# Convertir la matriz en un kable
+kable(matriz_duplicados, format = "html", caption = "Matriz de coincidencias de IDs por año") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+
